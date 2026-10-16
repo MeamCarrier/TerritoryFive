@@ -123,13 +123,26 @@ export function territory(board) {
   return { black, white, neutral, owners };
 }
 
+export function score(board, captures = {}) {
+  const area = territory(board);
+  const captured = { 1: captures[1] ?? 0, 2: captures[2] ?? 0 };
+  return {
+    ...area,
+    territory: { black: area.black, white: area.white },
+    captures: captured,
+    black: area.black + captured[1],
+    white: area.white + captured[2],
+  };
+}
+
 function positionKey(board, nextTurn) {
   return `${board.join('')}:${nextTurn}`;
 }
 
 function finishByPasses(state) {
   const result = territory(state.board);
-  const winner = result.black > result.white ? 1 : result.white > result.black ? 2 : 0;
+  const totals = score(state.board, state.captures);
+  const winner = totals.black > totals.white ? 1 : totals.white > totals.black ? 2 : 0;
   return { ...state, over: true, reason: 'passes', result, winner };
 }
 

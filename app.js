@@ -1,5 +1,5 @@
-import { SIZE, newGame, play, territory, stopGame, setupGame, undoHumanTurn } from './engine.js?v=20261016-2';
-import { chooseMove, lesson } from './cpu.js';
+import { SIZE, newGame, play, territory, score, stopGame, setupGame, undoHumanTurn } from './engine.js?v=20261017-1';
+import { chooseMove, lesson } from './cpu.js?v=20261017-1';
 
 const $ = (id) => document.getElementById(id);
 const boardNode = $('points');
@@ -20,7 +20,7 @@ let generation = 0;
 let draftBoard = null;
 function makeCpuWorker() {
   try {
-    return new Worker(new URL('./cpu-worker.js', import.meta.url), { type: 'module' });
+    return new Worker(new URL('./cpu-worker.js?v=20261017-1', import.meta.url), { type: 'module' });
   } catch {
     return null;
   }
@@ -47,13 +47,16 @@ function setAnnouncement(message, error = false) {
 
 function render() {
   const board = draftBoard ?? game.board;
-  const score = territory(board);
+  const area = territory(board);
+  const totals = score(board, game.captures);
   const humanTurn = isHumanTurn();
   const ended = game.over;
   phaseNode.textContent = draftBoard ? '置き石の配置中' : ended ? '対局終了' : cpuThinking ? 'CPUが読みを進めています…' : humanTurn ? 'あなた（黒）の手番' : 'CPU（白）の手番';
   $('move-no').textContent = `第 ${game.moveNumber + 1} 手`;
-  $('black-points').innerHTML = `${score.black}<small>点</small>`;
-  $('white-points').innerHTML = `${score.white}<small>点</small>`;
+  $('black-points').innerHTML = `${totals.black}<small>点</small>`;
+  $('white-points').innerHTML = `${totals.white}<small>点</small>`;
+  $('black-breakdown').textContent = `地 ${area.black} + 捕獲 ${game.captures[1]}子`;
+  $('white-breakdown').textContent = `地 ${area.white} + 捕獲 ${game.captures[2]}子`;
   $('pass-count').textContent = `連続パス ${Math.min(game.passes, 2)} / 2`;
   $('pass').disabled = !humanTurn;
   $('stop-game').disabled = ended || Boolean(draftBoard);
@@ -68,7 +71,7 @@ function render() {
     const point = document.createElement('button');
     const row = Math.floor(index / SIZE);
     const col = index % SIZE;
-    const owner = showTerritory ? score.owners[index] : 0;
+    const owner = showTerritory ? area.owners[index] : 0;
     point.type = 'button';
     point.className = `point${owner === 1 ? ' owned-black' : owner === 2 ? ' owned-white' : ''}${!draftBoard && game.lastMove === index ? ' last' : ''}`;
     point.style.left = `${14 + col * 18}%`;
@@ -104,7 +107,7 @@ function render() {
   });
 
   resultNode.hidden = !ended || Boolean(draftBoard);
-  if (ended && !draftBoard) renderResult(score);
+  if (ended && !draftBoard) renderResult(totals);
 }
 
 function renderResult(score) {
@@ -114,7 +117,7 @@ function renderResult(score) {
   if (game.reason === 'passes') {
     kind.textContent = '双方連続パスで終局';
     title.textContent = game.winner === 0 ? '引き分け' : `${colorName(game.winner)}の勝ち`;
-    detail.textContent = `空点の地は黒 ${score.black} 点、白 ${score.white} 点。石とアゲハマは数えません。`;
+    detail.textContent = `黒：地 ${score.territory.black} 点 + 捕獲 ${score.captures[1]} 子 = ${score.black} 点。白：地 ${score.territory.white} 点 + 捕獲 ${score.captures[2]} 子 = ${score.white} 点。`;
   } else {
     kind.textContent = '任意終了';
     title.textContent = '対局を終了しました';
@@ -131,8 +134,8 @@ function recordMove(index) {
   game = result.state;
   const mover = result.state.log.at(-1);
   if (game.over) {
-    const score = game.result;
-    setAnnouncement(`双方が続けてパスしました。黒 ${score.black} 点、白 ${score.white} 点で終局です。`);
+    const totals = score(game.board, game.captures);
+    setAnnouncement(`双方が続けてパスしました。黒 ${totals.black} 点、白 ${totals.white} 点で終局です。`);
   } else if (mover.index === null) {
     setAnnouncement(`${colorName(mover.color)}がパスしました。${game.passes === 1 ? '相手もパスすると終局です。' : '対局を続けます。'}`);
   } else if (mover.captured.length) {
