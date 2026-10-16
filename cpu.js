@@ -5,10 +5,10 @@ const MAX_DEPTH = 9;
 const NODE_BUDGET = 140_000;
 const SEARCH_LIMIT = Symbol('search-limit');
 
-function evaluate(board, color, captures) {
+function evaluate(board, color, captures, includeCaptures) {
   const area = territory(board);
   const sign = color === 1 ? 1 : -1;
-  let value = sign * ((area.black - area.white) + (captures[1] - captures[2])) * 3.5;
+  let value = sign * ((area.black - area.white) + (includeCaptures ? captures[1] - captures[2] : 0)) * 3.5;
   const seen = new Set();
 
   for (let i = 0; i < board.length; i += 1) {
@@ -48,8 +48,8 @@ function legalMoves(board, color) {
   return moves;
 }
 
-function movePriority(move, color) {
-  const capture = move.captured.length * 12;
+function movePriority(move, color, includeCaptures) {
+  const capture = includeCaptures ? move.captured.length * 12 : 0;
   const liberties = group(move.board, move.index).liberties.length;
   let contact = 0;
   for (const next of neighbors(move.index)) {
@@ -58,30 +58,30 @@ function movePriority(move, color) {
   return capture + Math.min(liberties, 4) * 1.5 + contact * 0.3;
 }
 
-function orderedMoves(board, color) {
+function orderedMoves(board, color, includeCaptures) {
   return legalMoves(board, color)
-    .map((move) => ({ ...move, priority: movePriority(move, color) }))
+    .map((move) => ({ ...move, priority: movePriority(move, color, includeCaptures) }))
     .sort((a, b) => b.priority - a.priority);
 }
 
-function search(board, color, captures, passes, depth, alpha, beta, budget) {
+function search(board, color, captures, passes, depth, alpha, beta, budget, includeCaptures) {
   budget.nodes += 1;
   if (budget.nodes > NODE_BUDGET) throw SEARCH_LIMIT;
   if (passes >= 2) {
-    const result = score(board, captures);
+    const result = score(board, captures, includeCaptures);
     return (color === 1 ? result.black - result.white : result.white - result.black) * 10000;
   }
-  if (depth === 0) return evaluate(board, color, captures);
+  if (depth === 0) return evaluate(board, color, captures, includeCaptures);
 
   let best = -Infinity;
   const nextColor = 3 - color;
-  const moves = orderedMoves(board, color);
+  const moves = orderedMoves(board, color, includeCaptures);
   moves.push({ index: PASS, board, captured: [], priority: -1 });
 
   for (const move of moves) {
     const nextPasses = move.index === PASS ? passes + 1 : 0;
     const nextCaptures = { ...captures, [color]: captures[color] + move.captured.length };
-    const value = -search(move.board, nextColor, nextCaptures, nextPasses, depth - 1, -beta, -alpha, budget);
+    const value = -search(move.board, nextColor, nextCaptures, nextPasses, depth - 1, -beta, -alpha, budget, includeCaptures);
     if (value > best) best = value;
     if (value > alpha) alpha = value;
     if (alpha >= beta) break;
@@ -92,6 +92,7 @@ function search(board, color, captures, passes, depth, alpha, beta, budget) {
 export function chooseMove(state) {
   if (!state || state.over) return { index: PASS, reason: '対局は終了しています。' };
   const color = state.turn;
+  const includeCaptures = state.includeCaptures !== false;
   let chosen = { index: PASS, board: state.board, captured: [], value: -Infinity };
   let previous = null;
   const budget = { nodes: 0 };
@@ -99,7 +100,7 @@ export function chooseMove(state) {
   for (let depth = 1; depth <= MAX_DEPTH; depth += 1) {
     let iterationBest = { index: PASS, board: state.board, captured: [], value: -Infinity };
     let alpha = -Infinity;
-    const moves = orderedMoves(state.board, color);
+    const moves = orderedMoves(state.board, color, includeCaptures);
     if (previous && previous.index !== PASS) {
       moves.sort((a, b) => (a.index === previous.index ? -1 : b.index === previous.index ? 1 : 0));
     }
@@ -108,7 +109,7 @@ export function chooseMove(state) {
       for (const move of moves) {
         const nextPasses = move.index === PASS ? state.passes + 1 : 0;
         const nextCaptures = { ...state.captures, [color]: state.captures[color] + move.captured.length };
-        const value = -search(move.board, 3 - color, nextCaptures, nextPasses, depth - 1, -Infinity, -alpha, budget);
+        const value = -search(move.board, 3 - color, nextCaptures, nextPasses, depth - 1, -Infinity, -alpha, budget, includeCaptures);
         if (value > iterationBest.value) {
           iterationBest = { ...move, value };
           alpha = value;

@@ -1,4 +1,4 @@
-import { chooseMove } from './cpu.js?v=20261017-1';
+import { chooseMove } from './cpu.js?v=20261017-2';
 
 self.addEventListener('message', (event) => {
   const { token, state } = event.data ?? {};

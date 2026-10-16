@@ -1,5 +1,5 @@
-import { SIZE, newGame, play, territory, score, stopGame, setupGame, undoHumanTurn } from './engine.js?v=20261017-1';
-import { chooseMove, lesson } from './cpu.js?v=20261017-1';
+import { SIZE, newGame, play, territory, score, stopGame, setupGame, undoHumanTurn } from './engine.js?v=20261017-2';
+import { chooseMove, lesson } from './cpu.js?v=20261017-2';
 
 const $ = (id) => document.getElementById(id);
 const boardNode = $('points');
@@ -20,7 +20,7 @@ let generation = 0;
 let draftBoard = null;
 function makeCpuWorker() {
   try {
-    return new Worker(new URL('./cpu-worker.js?v=20261017-1', import.meta.url), { type: 'module' });
+    return new Worker(new URL('./cpu-worker.js?v=20261017-2', import.meta.url), { type: 'module' });
   } catch {
     return null;
   }
@@ -45,18 +45,83 @@ function setAnnouncement(message, error = false) {
   announcement.classList.toggle('error', error);
 }
 
+function scoreTrend() {
+  let replay = setupGame(game.initialBoard ?? Array(SIZE * SIZE).fill(0));
+  const points = [score(replay.board, replay.captures, game.includeCaptures)];
+  for (const move of game.log) {
+    const next = play(replay, move.index);
+    if (!next.ok) break;
+    replay = next.state;
+    points.push(score(replay.board, replay.captures, game.includeCaptures));
+  }
+  return points;
+}
+
+function renderScoreChart() {
+  const svg = $('score-chart');
+  const data = scoreTrend();
+  const width = 520;
+  const height = 230;
+  const left = 46;
+  const right = 502;
+  const top = 18;
+  const bottom = 184;
+  const maxScore = Math.max(1, ...data.flatMap((point) => [point.black, point.white]));
+  const ceiling = Math.max(5, Math.ceil(maxScore / 5) * 5);
+  const x = (index) => data.length < 2 ? (left + right) / 2 : left + (right - left) * index / (data.length - 1);
+  const y = (value) => bottom - (bottom - top) * value / ceiling;
+  const make = (name, attrs = {}) => {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+    return node;
+  };
+  svg.replaceChildren();
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  const desc = make('desc');
+  desc.textContent = `現在の採点方法で再集計。全${data.length - 1}手の得点推移。黒は${data.at(-1).black}点、白は${data.at(-1).white}点。`;
+  svg.append(desc);
+  for (let tick = 0; tick <= 4; tick += 1) {
+    const value = ceiling * tick / 4;
+    const yy = y(value);
+    svg.append(make('line', { x1: left, y1: yy, x2: right, y2: yy, class: 'chart-grid' }));
+    const label = make('text', { x: left - 8, y: yy + 4, 'text-anchor': 'end', class: 'chart-axis' });
+    label.textContent = String(Math.round(value));
+    svg.append(label);
+  }
+  const axis = make('text', { x: left, y: 218, class: 'chart-axis' });
+  axis.textContent = '開始';
+  svg.append(axis);
+  const end = make('text', { x: right, y: 218, 'text-anchor': 'end', class: 'chart-axis' });
+  end.textContent = `${data.length - 1}手`;
+  svg.append(end);
+  for (const [key, color, className] of [['black', 1, 'chart-black'], ['white', 2, 'chart-white']]) {
+    const path = data.map((point, index) => `${index ? 'L' : 'M'} ${x(index)} ${y(point[key])}`).join(' ');
+    svg.append(make('path', { d: path, class: className }));
+    data.forEach((point, index) => {
+      const dot = make('circle', { cx: x(index), cy: y(point[key]), r: 3, class: className });
+      const title = make('title');
+      title.textContent = `${index === 0 ? '開始時' : `${index}手目`}・${color === 1 ? '黒' : '白'} ${point[key]}点`;
+      dot.append(title);
+      svg.append(dot);
+    });
+  }
+  $('chart-note').textContent = `現在の採点方法で全${data.length - 1}手を再集計`;
+}
+
 function render() {
   const board = draftBoard ?? game.board;
   const area = territory(board);
-  const totals = score(board, game.captures);
+  const totals = score(board, game.captures, game.includeCaptures);
   const humanTurn = isHumanTurn();
   const ended = game.over;
   phaseNode.textContent = draftBoard ? '置き石の配置中' : ended ? '対局終了' : cpuThinking ? 'CPUが読みを進めています…' : humanTurn ? 'あなた（黒）の手番' : 'CPU（白）の手番';
   $('move-no').textContent = `第 ${game.moveNumber + 1} 手`;
   $('black-points').innerHTML = `${totals.black}<small>点</small>`;
   $('white-points').innerHTML = `${totals.white}<small>点</small>`;
-  $('black-breakdown').textContent = `地 ${area.black} + 捕獲 ${game.captures[1]}子`;
-  $('white-breakdown').textContent = `地 ${area.white} + 捕獲 ${game.captures[2]}子`;
+  $('black-breakdown').textContent = `地 ${area.black}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[1]}子${game.includeCaptures ? '' : '（除外）'}`;
+  $('white-breakdown').textContent = `地 ${area.white}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[2]}子${game.includeCaptures ? '' : '（除外）'}`;
+  $('include-captures').checked = game.includeCaptures;
+  $('include-captures').disabled = ended || Boolean(draftBoard);
   $('pass-count').textContent = `連続パス ${Math.min(game.passes, 2)} / 2`;
   $('pass').disabled = !humanTurn;
   $('stop-game').disabled = ended || Boolean(draftBoard);
@@ -96,6 +161,7 @@ function render() {
   $('hint').setAttribute('aria-pressed', String(showTerritory));
   $('hint').innerHTML = `空点の色分け <span>${showTerritory ? 'ON' : 'OFF'}</span>`;
   $('history-count').textContent = `${game.log.length}手`;
+  renderScoreChart();
   const history = $('history');
   history.replaceChildren();
   game.log.forEach((move, index) => {
@@ -117,7 +183,7 @@ function renderResult(score) {
   if (game.reason === 'passes') {
     kind.textContent = '双方連続パスで終局';
     title.textContent = game.winner === 0 ? '引き分け' : `${colorName(game.winner)}の勝ち`;
-    detail.textContent = `黒：地 ${score.territory.black} 点 + 捕獲 ${score.captures[1]} 子 = ${score.black} 点。白：地 ${score.territory.white} 点 + 捕獲 ${score.captures[2]} 子 = ${score.white} 点。`;
+    detail.textContent = `黒：地 ${score.territory.black} 点${game.includeCaptures ? ` + 捕獲 ${score.captures[1]} 子` : ''} = ${score.black} 点。白：地 ${score.territory.white} 点${game.includeCaptures ? ` + 捕獲 ${score.captures[2]} 子` : ''} = ${score.white} 点。`;
   } else {
     kind.textContent = '任意終了';
     title.textContent = '対局を終了しました';
@@ -134,7 +200,7 @@ function recordMove(index) {
   game = result.state;
   const mover = result.state.log.at(-1);
   if (game.over) {
-    const totals = score(game.board, game.captures);
+    const totals = score(game.board, game.captures, game.includeCaptures);
     setAnnouncement(`双方が続けてパスしました。黒 ${totals.black} 点、白 ${totals.white} 点で終局です。`);
   } else if (mover.index === null) {
     setAnnouncement(`${colorName(mover.color)}がパスしました。${game.passes === 1 ? '相手もパスすると終局です。' : '対局を続けます。'}`);
@@ -236,6 +302,15 @@ $('start-setup').addEventListener('click', () => {
   }
 });
 $('hint').addEventListener('click', () => { showTerritory = !showTerritory; render(); });
+$('include-captures').addEventListener('change', (event) => {
+  if (game.over || draftBoard) return;
+  const wasThinking = cpuThinking;
+  if (wasThinking) cancelCpu();
+  game = { ...game, includeCaptures: event.currentTarget.checked };
+  setAnnouncement(`捕獲した石を${game.includeCaptures ? '得点に含めます' : '得点から除外します'}。${wasThinking ? 'CPUはこの条件で読み直します。' : ''}`);
+  render();
+  scheduleCpu();
+});
 $('new-game').addEventListener('click', () => {
   if (game.over) return beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。');
   $('confirm-dialog').showModal();

@@ -123,15 +123,16 @@ export function territory(board) {
   return { black, white, neutral, owners };
 }
 
-export function score(board, captures = {}) {
+export function score(board, captures = {}, includeCaptures = true) {
   const area = territory(board);
   const captured = { 1: captures[1] ?? 0, 2: captures[2] ?? 0 };
   return {
     ...area,
     territory: { black: area.black, white: area.white },
     captures: captured,
-    black: area.black + captured[1],
-    white: area.white + captured[2],
+    black: area.black + (includeCaptures ? captured[1] : 0),
+    white: area.white + (includeCaptures ? captured[2] : 0),
+    includeCaptures,
   };
 }
 
@@ -141,7 +142,7 @@ function positionKey(board, nextTurn) {
 
 function finishByPasses(state) {
   const result = territory(state.board);
-  const totals = score(state.board, state.captures);
+  const totals = score(state.board, state.captures, state.includeCaptures !== false);
   const winner = totals.black > totals.white ? 1 : totals.white > totals.black ? 2 : 0;
   return { ...state, over: true, reason: 'passes', result, winner };
 }
@@ -158,6 +159,7 @@ export function newGame() {
     moveNumber: 0,
     lastMove: null,
     captures: { 1: 0, 2: 0 },
+    includeCaptures: true,
     history: [positionKey(board, 1)],
     log: [],
   };
@@ -239,5 +241,5 @@ export function undoHumanTurn(state) {
     if (!result.ok) throw new Error('invalid-history');
     restored = result.state;
   }
-  return restored;
+  return { ...restored, includeCaptures: state.includeCaptures !== false };
 }
