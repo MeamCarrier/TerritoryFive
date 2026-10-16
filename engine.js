@@ -159,7 +159,7 @@ export function newGame() {
     moveNumber: 0,
     lastMove: null,
     captures: { 1: 0, 2: 0 },
-    includeCaptures: true,
+    includeCaptures: false,
     history: [positionKey(board, 1)],
     log: [],
   };

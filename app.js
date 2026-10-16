@@ -1,4 +1,4 @@
-import { SIZE, newGame, play, territory, score, stopGame, setupGame, undoHumanTurn } from './engine.js?v=20261017-2';
+import { SIZE, newGame, play, territory, score, stopGame, setupGame, undoHumanTurn } from './engine.js?v=20261017-3';
 import { chooseMove, lesson } from './cpu.js?v=20261017-2';
 
 const $ = (id) => document.getElementById(id);
