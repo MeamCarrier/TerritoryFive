@@ -61,11 +61,11 @@ function renderScoreChart() {
   const svg = $('score-chart');
   const data = scoreTrend();
   const width = Math.max(280, Math.round(svg.clientWidth || 520));
-  const height = 62;
+  const height = Math.max(40, Math.round(($('board').clientWidth || 440) * 0.14));
   const left = width * 0.09;
   const right = width * 0.97;
-  const top = 4;
-  const bottom = 38;
+  const top = height * 0.07;
+  const bottom = height * 0.62;
   const maxScore = Math.max(1, ...data.flatMap((point) => [point.black, point.white]));
   const ceiling = Math.max(5, Math.ceil(maxScore / 5) * 5);
   const x = (index) => data.length < 2 ? (left + right) / 2 : left + (right - left) * index / (data.length - 1);
@@ -88,10 +88,10 @@ function renderScoreChart() {
     label.textContent = String(Math.round(value * 10) / 10);
     svg.append(label);
   }
-  const axis = make('text', { x: left, y: 57, class: 'chart-axis' });
+  const axis = make('text', { x: left, y: height * 0.94, class: 'chart-axis' });
   axis.textContent = '開始';
   svg.append(axis);
-  const end = make('text', { x: right, y: 57, 'text-anchor': 'end', class: 'chart-axis' });
+  const end = make('text', { x: right, y: height * 0.94, 'text-anchor': 'end', class: 'chart-axis' });
   end.textContent = `${data.length - 1}手`;
   svg.append(end);
   for (const [key, color, className] of [['black', 1, 'chart-black'], ['white', 2, 'chart-white']]) {
