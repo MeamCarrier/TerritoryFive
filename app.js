@@ -60,12 +60,12 @@ function scoreTrend() {
 function renderScoreChart() {
   const svg = $('score-chart');
   const data = scoreTrend();
-  const width = 520;
-  const height = 230;
-  const left = 46;
-  const right = 502;
-  const top = 18;
-  const bottom = 184;
+  const width = Math.max(280, Math.round(svg.clientWidth || 520));
+  const height = 62;
+  const left = width * 0.09;
+  const right = width * 0.97;
+  const top = 4;
+  const bottom = 38;
   const maxScore = Math.max(1, ...data.flatMap((point) => [point.black, point.white]));
   const ceiling = Math.max(5, Math.ceil(maxScore / 5) * 5);
   const x = (index) => data.length < 2 ? (left + right) / 2 : left + (right - left) * index / (data.length - 1);
@@ -88,10 +88,10 @@ function renderScoreChart() {
     label.textContent = String(Math.round(value));
     svg.append(label);
   }
-  const axis = make('text', { x: left, y: 218, class: 'chart-axis' });
+  const axis = make('text', { x: left, y: 57, class: 'chart-axis' });
   axis.textContent = '開始';
   svg.append(axis);
-  const end = make('text', { x: right, y: 218, 'text-anchor': 'end', class: 'chart-axis' });
+  const end = make('text', { x: right, y: 57, 'text-anchor': 'end', class: 'chart-axis' });
   end.textContent = `${data.length - 1}手`;
   svg.append(end);
   for (const [key, color, className] of [['black', 1, 'chart-black'], ['white', 2, 'chart-white']]) {
@@ -331,3 +331,4 @@ $('load-lesson').addEventListener('click', () => {
 
 setAnnouncement('あなたは黒・先手です。空いている交点をタップして初手を打ちましょう。');
 render();
+window.addEventListener('resize', renderScoreChart, { passive: true });
