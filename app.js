@@ -80,8 +80,8 @@ function renderScoreChart() {
   const desc = make('desc');
   desc.textContent = `現在の採点方法で再集計。全${data.length - 1}手の得点推移。黒は${data.at(-1).black}点、白は${data.at(-1).white}点。`;
   svg.append(desc);
-  for (let tick = 0; tick <= 4; tick += 1) {
-    const value = ceiling * tick / 4;
+  for (let tick = 0; tick <= 5; tick += 1) {
+    const value = ceiling * tick / 5;
     const yy = y(value);
     svg.append(make('line', { x1: left, y1: yy, x2: right, y2: yy, class: 'chart-grid' }));
     const label = make('text', { x: left - 8, y: yy + 4, 'text-anchor': 'end', class: 'chart-axis' });
