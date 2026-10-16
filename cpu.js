@@ -1,0 +1,135 @@
+import { neighbors, group, tryMove, territory } from './engine.js';
+
+const PASS = null;
+const MAX_DEPTH = 9;
+const NODE_BUDGET = 140_000;
+const SEARCH_LIMIT = Symbol('search-limit');
+
+function evaluate(board, color) {
+  const score = territory(board);
+  const sign = color === 1 ? 1 : -1;
+  let value = sign * (score.black - score.white) * 3.5;
+  const seen = new Set();
+
+  for (let i = 0; i < board.length; i += 1) {
+    const stone = board[i];
+    if (!stone || seen.has(i)) continue;
+    const g = group(board, i);
+    for (const point of g.stones) seen.add(point);
+    const side = stone === color ? 1 : -1;
+    const libertyCount = g.liberties.length;
+    if (libertyCount === 1) value -= side * (7 + g.stones.length * 2.2);
+    else if (libertyCount === 2) value -= side * (2 + g.stones.length * 0.7);
+    else value += side * Math.min(libertyCount, 5) * 0.12;
+  }
+
+  // Empty intersections near safe stones are useful for future territory,
+  // but never count as points until the territory rule actually assigns them.
+  for (let i = 0; i < board.length; i += 1) {
+    if (board[i] !== 0) continue;
+    let own = 0;
+    let enemy = 0;
+    for (const next of neighbors(i)) {
+      if (board[next] === color) own += 1;
+      else if (board[next] === 3 - color) enemy += 1;
+    }
+    value += (own - enemy) * 0.16;
+  }
+  return value;
+}
+
+function legalMoves(board, color) {
+  const moves = [];
+  for (let index = 0; index < board.length; index += 1) {
+    if (board[index] !== 0) continue;
+    const move = tryMove(board, color, index);
+    if (move.ok) moves.push({ index, board: move.board, captured: move.captured });
+  }
+  return moves;
+}
+
+function movePriority(move, color) {
+  const capture = move.captured.length * 12;
+  const liberties = group(move.board, move.index).liberties.length;
+  let contact = 0;
+  for (const next of neighbors(move.index)) {
+    if (move.board[next] === 3 - color) contact += 1;
+  }
+  return capture + Math.min(liberties, 4) * 1.5 + contact * 0.3;
+}
+
+function orderedMoves(board, color) {
+  return legalMoves(board, color)
+    .map((move) => ({ ...move, priority: movePriority(move, color) }))
+    .sort((a, b) => b.priority - a.priority);
+}
+
+function search(board, color, passes, depth, alpha, beta, budget) {
+  budget.nodes += 1;
+  if (budget.nodes > NODE_BUDGET) throw SEARCH_LIMIT;
+  if (passes >= 2) {
+    const score = territory(board);
+    return (color === 1 ? score.black - score.white : score.white - score.black) * 10000;
+  }
+  if (depth === 0) return evaluate(board, color);
+
+  let best = -Infinity;
+  const nextColor = 3 - color;
+  const moves = orderedMoves(board, color);
+  moves.push({ index: PASS, board, captured: [], priority: -1 });
+
+  for (const move of moves) {
+    const nextPasses = move.index === PASS ? passes + 1 : 0;
+    const value = -search(move.board, nextColor, nextPasses, depth - 1, -beta, -alpha, budget);
+    if (value > best) best = value;
+    if (value > alpha) alpha = value;
+    if (alpha >= beta) break;
+  }
+  return best;
+}
+
+export function chooseMove(state) {
+  if (!state || state.over) return { index: PASS, reason: '対局は終了しています。' };
+  const color = state.turn;
+  let chosen = { index: PASS, board: state.board, captured: [], value: -Infinity };
+  let previous = null;
+  const budget = { nodes: 0 };
+
+  for (let depth = 1; depth <= MAX_DEPTH; depth += 1) {
+    let iterationBest = { index: PASS, board: state.board, captured: [], value: -Infinity };
+    let alpha = -Infinity;
+    const moves = orderedMoves(state.board, color);
+    if (previous && previous.index !== PASS) {
+      moves.sort((a, b) => (a.index === previous.index ? -1 : b.index === previous.index ? 1 : 0));
+    }
+    moves.push({ index: PASS, board: state.board, captured: [], priority: -1 });
+    try {
+      for (const move of moves) {
+        const nextPasses = move.index === PASS ? state.passes + 1 : 0;
+        const value = -search(move.board, 3 - color, nextPasses, depth - 1, -Infinity, -alpha, budget);
+        if (value > iterationBest.value) {
+          iterationBest = { ...move, value };
+          alpha = value;
+        }
+      }
+      chosen = iterationBest;
+      previous = iterationBest;
+    } catch (error) {
+      if (error !== SEARCH_LIMIT) throw error;
+      break;
+    }
+  }
+
+  if (chosen.index === PASS) return { index: PASS, reason: '探索した範囲では、打つより空点を残す方が有利と判断しました。' };
+  if (chosen.captured.length) return { index: chosen.index, reason: '相手の石を' + chosen.captured.length + '個取り、盤面を読み直します。' };
+  return { index: chosen.index, reason: '数手先の陣地と石の安全を読んで選びました。' };
+}
+
+export function lesson(name) {
+  const patterns = {
+    pass: ['BBWWW', 'B.W.W', 'BBWWW', 'B.W.W', 'BBWWW'],
+    capture: ['.B...', 'BWB..', '.....', '...W.', '.....'],
+    space: ['BBBBB', 'B...B', 'B...B', 'BBBBB', 'WWWWW'],
+  };
+  return patterns[name]?.flatMap((row) => [...row].map((v) => v === 'B' ? 1 : v === 'W' ? 2 : 0));
+}

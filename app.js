@@ -1,0 +1,255 @@
+import { SIZE, newGame, play, territory, stopGame, setupGame, undoHumanTurn } from './engine.js?v=20261016-2';
+import { chooseMove, lesson } from './cpu.js';
+
+const $ = (id) => document.getElementById(id);
+const boardNode = $('points');
+const phaseNode = $('phase');
+const announcement = $('announcement');
+const resultNode = $('result');
+const HISTORY_NAMES = { pass: 'パスで余白を残す', capture: '取って空点を広げる', space: '広い空間を見る' };
+const MOVE_ERRORS = {
+  occupied: 'そこにはすでに石があります。',
+  suicide: '自分の石の呼吸点がなくなる手は打てません。',
+  'invalid-index': 'その交点には打てません。',
+};
+
+let game = newGame();
+let showTerritory = true;
+let cpuThinking = false;
+let generation = 0;
+let draftBoard = null;
+function makeCpuWorker() {
+  try {
+    return new Worker(new URL('./cpu-worker.js', import.meta.url), { type: 'module' });
+  } catch {
+    return null;
+  }
+}
+let cpuWorker = makeCpuWorker();
+
+function cancelCpu() {
+  generation += 1;
+  cpuThinking = false;
+  cpuWorker?.terminate();
+  cpuWorker = makeCpuWorker();
+}
+
+function colorName(color) { return color === 1 ? '黒' : '白'; }
+function coordinate(index) {
+  return `${String.fromCharCode(65 + index % SIZE)}${Math.floor(index / SIZE) + 1}`;
+}
+function isHumanTurn() { return !draftBoard && !game.over && game.turn === 1 && !cpuThinking; }
+
+function setAnnouncement(message, error = false) {
+  announcement.textContent = message;
+  announcement.classList.toggle('error', error);
+}
+
+function render() {
+  const board = draftBoard ?? game.board;
+  const score = territory(board);
+  const humanTurn = isHumanTurn();
+  const ended = game.over;
+  phaseNode.textContent = draftBoard ? '置き石の配置中' : ended ? '対局終了' : cpuThinking ? 'CPUが読みを進めています…' : humanTurn ? 'あなた（黒）の手番' : 'CPU（白）の手番';
+  $('move-no').textContent = `第 ${game.moveNumber + 1} 手`;
+  $('black-points').innerHTML = `${score.black}<small>点</small>`;
+  $('white-points').innerHTML = `${score.white}<small>点</small>`;
+  $('pass-count').textContent = `連続パス ${Math.min(game.passes, 2)} / 2`;
+  $('pass').disabled = !humanTurn;
+  $('stop-game').disabled = ended || Boolean(draftBoard);
+  $('undo').disabled = Boolean(draftBoard) || !game.log.some((move) => move.color === 1);
+  $('setup-controls').hidden = !draftBoard;
+  $('edit-setup').disabled = Boolean(draftBoard);
+  $('black-score').classList.toggle('active-player', !draftBoard && !ended && game.turn === 1);
+  $('white-score').classList.toggle('active-player', !draftBoard && !ended && game.turn === 2);
+
+  boardNode.replaceChildren();
+  board.forEach((stone, index) => {
+    const point = document.createElement('button');
+    const row = Math.floor(index / SIZE);
+    const col = index % SIZE;
+    const owner = showTerritory ? score.owners[index] : 0;
+    point.type = 'button';
+    point.className = `point${owner === 1 ? ' owned-black' : owner === 2 ? ' owned-white' : ''}${!draftBoard && game.lastMove === index ? ' last' : ''}`;
+    point.style.left = `${14 + col * 18}%`;
+    point.style.top = `${14 + row * 18}%`;
+    point.setAttribute('aria-label', `${coordinate(index)} ${stone ? `${colorName(stone)}の石` : '空点'}${owner ? `・${colorName(owner)}の地` : ''}`);
+    point.disabled = !draftBoard && (!humanTurn || stone !== 0);
+    if (stone) {
+      const stoneNode = document.createElement('span');
+      stoneNode.className = `stone ${stone === 1 ? 'black' : 'white'}`;
+      point.append(stoneNode);
+    }
+    point.addEventListener('click', () => {
+      if (draftBoard) {
+        const color = Number($('setup-color').value);
+        draftBoard[index] = draftBoard[index] === color ? 0 : color;
+        render();
+      } else humanMove(index);
+    });
+    boardNode.append(point);
+  });
+
+  $('hint').setAttribute('aria-pressed', String(showTerritory));
+  $('hint').innerHTML = `空点の色分け <span>${showTerritory ? 'ON' : 'OFF'}</span>`;
+  $('history-count').textContent = `${game.log.length}手`;
+  const history = $('history');
+  history.replaceChildren();
+  game.log.forEach((move, index) => {
+    const item = document.createElement('li');
+    const player = move.color === 1 ? 'あなた（黒）' : 'CPU（白）';
+    const action = move.index === null ? 'パス' : coordinate(move.index);
+    item.textContent = `${index + 1}. ${player}：${action}${move.captured.length ? `、${move.captured.length}子を捕獲` : ''}`;
+    history.append(item);
+  });
+
+  resultNode.hidden = !ended || Boolean(draftBoard);
+  if (ended && !draftBoard) renderResult(score);
+}
+
+function renderResult(score) {
+  const kind = $('result-kind');
+  const title = $('result-title');
+  const detail = $('result-detail');
+  if (game.reason === 'passes') {
+    kind.textContent = '双方連続パスで終局';
+    title.textContent = game.winner === 0 ? '引き分け' : `${colorName(game.winner)}の勝ち`;
+    detail.textContent = `空点の地は黒 ${score.black} 点、白 ${score.white} 点。石とアゲハマは数えません。`;
+  } else {
+    kind.textContent = '任意終了';
+    title.textContent = '対局を終了しました';
+    detail.textContent = 'この対局の勝敗・得点は確定していません。新しい対局を始められます。';
+  }
+}
+
+function recordMove(index) {
+  const result = play(game, index);
+  if (!result.ok) {
+    setAnnouncement(MOVE_ERRORS[result.error] ?? 'その手は打てません。', true);
+    return false;
+  }
+  game = result.state;
+  const mover = result.state.log.at(-1);
+  if (game.over) {
+    const score = game.result;
+    setAnnouncement(`双方が続けてパスしました。黒 ${score.black} 点、白 ${score.white} 点で終局です。`);
+  } else if (mover.index === null) {
+    setAnnouncement(`${colorName(mover.color)}がパスしました。${game.passes === 1 ? '相手もパスすると終局です。' : '対局を続けます。'}`);
+  } else if (mover.captured.length) {
+    setAnnouncement(`${colorName(mover.color)}が${mover.captured.length}子を取りました。`);
+  } else {
+    setAnnouncement(`${colorName(mover.color)}が${coordinate(mover.index)}に打ちました。`);
+  }
+  render();
+  return true;
+}
+
+function humanMove(index) {
+  if (!isHumanTurn()) return;
+  if (recordMove(index)) scheduleCpu();
+}
+
+function scheduleCpu() {
+  if (draftBoard || game.over || game.turn !== 2 || cpuThinking) return;
+  cpuThinking = true;
+  const token = generation;
+  setAnnouncement('CPUが数手先を読んでいます。');
+  render();
+  const finish = (choice) => {
+    if (token !== generation || game.over || game.turn !== 2) return;
+    cpuThinking = false;
+    recordMove(choice.index);
+    if (!game.over) setAnnouncement(`CPU：${choice.reason}`);
+    render();
+  };
+  if (cpuWorker) {
+    cpuWorker.onmessage = (event) => {
+      if (event.data?.token === token) finish(event.data.choice);
+    };
+    cpuWorker.onerror = () => {
+      if (token === generation) {
+        cpuThinking = false;
+        setAnnouncement('CPUの探索に失敗しました。新しい対局でやり直してください。', true);
+        render();
+      }
+    };
+    cpuWorker.postMessage({ token, state: game });
+  } else {
+    window.setTimeout(() => {
+      if (token === generation && !draftBoard && !game.over && game.turn === 2) finish(chooseMove(game));
+    }, 40);
+  }
+}
+
+function stopGameNow() {
+  if (game.over) return;
+  cancelCpu();
+  game = stopGame(game);
+  setAnnouncement('対局を終了しました。勝敗・得点は確定していません。');
+  render();
+  resultNode.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function beginGame(nextGame, message) {
+  cancelCpu();
+  draftBoard = null;
+  game = nextGame;
+  resultNode.hidden = true;
+  setAnnouncement(message);
+  render();
+}
+
+$('pass').addEventListener('click', () => {
+  if (isHumanTurn() && recordMove(null)) scheduleCpu();
+});
+$('stop-game').addEventListener('click', stopGameNow);
+$('undo').addEventListener('click', () => {
+  if (draftBoard) return;
+  const restored = undoHumanTurn(game);
+  if (!restored) return;
+  beginGame(restored, 'あなたが打つ前に戻しました。別の手を試せます。');
+});
+$('edit-setup').addEventListener('click', () => {
+  cancelCpu();
+  draftBoard = game.board.slice();
+  setAnnouncement('黒・白・消しゴムを選んで盤をタップ。配置から始めると手の記録をリセットします。');
+  render();
+});
+$('clear-setup').addEventListener('click', () => {
+  if (draftBoard) { draftBoard.fill(0); render(); }
+});
+$('cancel-setup').addEventListener('click', () => {
+  draftBoard = null;
+  setAnnouncement('配置を取り消し、元の対局に戻りました。');
+  render();
+  scheduleCpu();
+});
+$('start-setup').addEventListener('click', () => {
+  if (!draftBoard) return;
+  try {
+    beginGame(setupGame(draftBoard), '置き石から対局開始。あなた（黒）の手番です。');
+  } catch {
+    setAnnouncement('呼吸点が0の石があります。消しゴムで石を取り除くか、隣の交点を空けてください。', true);
+  }
+});
+$('hint').addEventListener('click', () => { showTerritory = !showTerritory; render(); });
+$('new-game').addEventListener('click', () => {
+  if (game.over) return beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。');
+  $('confirm-dialog').showModal();
+});
+$('again').addEventListener('click', () => beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。'));
+$('cancel-dialog').addEventListener('click', () => $('confirm-dialog').close());
+$('confirm-dialog-button').addEventListener('click', () => {
+  $('confirm-dialog').close();
+  beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。');
+});
+$('load-lesson').addEventListener('click', () => {
+  const name = $('lesson-select').value;
+  const board = lesson(name);
+  if (!board) return;
+  const next = setupGame(board);
+  beginGame(next, `${HISTORY_NAMES[name]}の練習盤です。黒の手を考えてください。`);
+});
+
+setAnnouncement('あなたは黒・先手です。空いている交点をタップして初手を打ちましょう。');
+render();
