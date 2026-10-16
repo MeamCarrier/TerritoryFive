@@ -47,25 +47,25 @@ function setAnnouncement(message, error = false) {
 
 function scoreTrend() {
   let replay = setupGame(game.initialBoard ?? Array(SIZE * SIZE).fill(0));
-  const points = [score(replay.board, replay.captures, game.includeCaptures)];
-  for (const move of game.log) {
+  const points = [{ ...score(replay.board, replay.captures, game.includeCaptures), move: 0 }];
+  for (const [index, move] of game.log.entries()) {
     const next = play(replay, move.index);
     if (!next.ok) break;
     replay = next.state;
-    points.push(score(replay.board, replay.captures, game.includeCaptures));
+    points.push({ ...score(replay.board, replay.captures, game.includeCaptures), move: index + 1 });
   }
-  return points;
+  return points.slice(-7);
 }
 
 function renderScoreChart() {
   const svg = $('score-chart');
   const data = scoreTrend();
   const width = Math.max(280, Math.round(svg.clientWidth || 520));
-  const height = Math.max(40, Math.round(($('board').clientWidth || 440) * 0.14));
+  const height = Math.max(90, Math.round(($('board').clientWidth || 440) * 0.34));
   const left = width * 0.09;
   const right = width * 0.97;
-  const top = height * 0.07;
-  const bottom = height * 0.62;
+  const top = height * 0.12;
+  const bottom = height * 0.76;
   const maxScore = Math.max(1, ...data.flatMap((point) => [point.black, point.white]));
   const ceiling = Math.max(5, Math.ceil(maxScore / 5) * 5);
   const x = (index) => data.length < 2 ? (left + right) / 2 : left + (right - left) * index / (data.length - 1);
@@ -77,8 +77,9 @@ function renderScoreChart() {
   };
   svg.replaceChildren();
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.style.height = `${height}px`;
   const desc = make('desc');
-  desc.textContent = `現在の採点方法で再集計。全${data.length - 1}手の得点推移。黒は${data.at(-1).black}点、白は${data.at(-1).white}点。`;
+  desc.textContent = `現在の採点方法で再集計。直近最大6手の得点推移。黒は${data.at(-1).black}点、白は${data.at(-1).white}点。`;
   svg.append(desc);
   for (let tick = 0; tick <= 2; tick += 1) {
     const value = ceiling * tick / 2;
@@ -89,10 +90,10 @@ function renderScoreChart() {
     svg.append(label);
   }
   const axis = make('text', { x: left, y: height * 0.94, class: 'chart-axis' });
-  axis.textContent = '開始';
+  axis.textContent = data.length === 7 ? `${data[0].move}手目` : '開始';
   svg.append(axis);
   const end = make('text', { x: right, y: height * 0.94, 'text-anchor': 'end', class: 'chart-axis' });
-  end.textContent = `${data.length - 1}手`;
+  end.textContent = data.at(-1).move ? `${data.at(-1).move}手目` : '開始';
   svg.append(end);
   for (const [key, color, className] of [['black', 1, 'chart-black'], ['white', 2, 'chart-white']]) {
     const path = data.map((point, index) => `${index ? 'L' : 'M'} ${x(index)} ${y(point[key])}`).join(' ');
@@ -100,12 +101,12 @@ function renderScoreChart() {
     data.forEach((point, index) => {
       const dot = make('circle', { cx: x(index), cy: y(point[key]), r: 3, class: className });
       const title = make('title');
-      title.textContent = `${index === 0 ? '開始時' : `${index}手目`}・${color === 1 ? '黒' : '白'} ${point[key]}点`;
+      title.textContent = `${point.move === 0 ? '開始時' : `${point.move}手目`}・${color === 1 ? '黒' : '白'} ${point[key]}点`;
       dot.append(title);
       svg.append(dot);
     });
   }
-  $('chart-note').textContent = `現在の採点方法で全${data.length - 1}手を再集計`;
+  $('chart-note').textContent = `直近${Math.min(game.log.length, 6)}手（累計点）`;
 }
 
 function render() {
