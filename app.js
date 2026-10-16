@@ -119,8 +119,8 @@ function render() {
   $('move-no').textContent = `第 ${game.moveNumber + 1} 手`;
   $('black-points').innerHTML = `${totals.black}<small>点</small>`;
   $('white-points').innerHTML = `${totals.white}<small>点</small>`;
-  $('black-breakdown').textContent = `地 ${area.black}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[1]}子${game.includeCaptures ? '' : '（除外）'}`;
-  $('white-breakdown').textContent = `地 ${area.white}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[2]}子${game.includeCaptures ? '' : '（除外）'}`;
+  $('black-breakdown').textContent = `地 ${area.black}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[1]}子`;
+  $('white-breakdown').textContent = `地 ${area.white}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[2]}子`;
   $('include-captures').checked = game.includeCaptures;
   $('include-captures').disabled = ended || Boolean(draftBoard);
   $('pass-count').textContent = `連続パス ${Math.min(game.passes, 2)} / 2`;
