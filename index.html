@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#173f37"><meta name="description" content="囲った空点と取った石を数える、初心者のための5路盤ゲーム。">
-<title>五路の余白 — 5路盤の陣地レッスン</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' rx='18' fill='%23173f37'/%3E%3Ccircle cx='40' cy='40' r='23' fill='%23f3e7cf'/%3E%3C/svg%3E"><link rel="stylesheet" href="style.css?v=20261017-7">
+<title>五路の余白 — 5路盤の陣地レッスン</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' rx='18' fill='%23173f37'/%3E%3Ccircle cx='40' cy='40' r='23' fill='%23f3e7cf'/%3E%3C/svg%3E"><link rel="stylesheet" href="style.css?v=20261018-1">
 </head>
 <body>
 <header class="site-header"><a class="brand" href="./" aria-label="五路の余白 ホーム"><span class="brand-mark">五</span><span>五路の余白<small>FIVE LINES, MORE SPACE.</small></span></a><span class="edition">5 × 5 <span>陣地レッスン</span></span></header>
@@ -11,6 +11,14 @@
 <section class="intro"><div><p class="eyebrow">石を取る、その先へ。</p><h1>囲った空点と、<br class="mobile-break">取った石が得点。</h1><p class="subhead">小さな盤で、囲う楽しさを。<br class="mobile-break">捕獲点は対局中に切り替えられます。</p></div><div class="intro-note"><span>25</span><p>の交点からはじまる<br>陣地の練習</p></div></section>
 <div class="layout">
 <section class="game-card" aria-label="対局盤">
+<div class="mode-switch" role="group" aria-label="遊び方"><button id="normal-mode" type="button" aria-pressed="true">通常対局</button><button id="learn-mode" type="button" aria-pressed="false">基本の形を学ぶ · 3問</button></div>
+<section id="basic-training" class="basic-training" hidden aria-labelledby="basic-heading">
+<p class="eyebrow">見て、比べて、自分で打つ。</p><h2 id="basic-heading">基本の形を学ぶ</h2>
+<label for="basic-select">問題を選ぶ</label><select id="basic-select"><option value="take">1. アタリを取る</option><option value="connect">2. 切られる前につなぐ</option><option value="keep">3. 地を埋めずに残す</option></select>
+<p id="basic-objective"></p><p class="basic-rule">黒・先手／地だけで採点（捕獲点OFF固定）。一般的な囲碁の定石集ではなく、このゲームの基本の形です。</p>
+<div class="basic-stages" role="group" aria-label="学び方"><button id="basic-demo" type="button" aria-pressed="true">① お手本</button><button id="basic-compare" type="button" aria-pressed="false">② 比べる</button><button id="basic-challenge" type="button" aria-pressed="false">③ 自力で挑戦</button></div>
+<small>問題・学び方の切替や「通常対局」で盤をリセットします。達成状況は保存しません。</small>
+</section>
 <div class="game-top"><div><span class="live-dot"></span><span id="phase">あなたの手番</span></div><span id="move-no">第 1 手</span></div>
 <section class="score-panel" aria-label="得点"><div class="scoreboard"><div id="black-score" class="score-player"><span class="stone-icon black"></span><div><strong>黒 <small id="black-who">あなた</small></strong><span id="black-breakdown" class="score-detail">地 0 + 捕獲 0子</span></div><b id="black-points">0<small>点</small></b></div><span class="score-divider">:</span><div id="white-score" class="score-player"><span class="stone-icon white"></span><div><strong>白 <small id="white-who">CPU</small></strong><span id="white-breakdown" class="score-detail">地 0 + 捕獲 0子</span></div><b id="white-points">0<small>点</small></b></div></div>
 <label class="capture-toggle"><input id="include-captures" type="checkbox"><span>取った石を得点に含める</span></label></section>
@@ -19,6 +27,13 @@
 <svg viewBox="0 0 500 500" aria-hidden="true"><defs><pattern id="grain" width="70" height="9" patternUnits="userSpaceOnUse"><path d="M0 4Q20 1 70 5" stroke="#a47839" fill="none" opacity=".055"/></pattern></defs><rect width="500" height="500" fill="url(#grain)"/><g stroke="#766044" stroke-width="1.5"><path d="M70 70H430M70 160H430M70 250H430M70 340H430M70 430H430M70 70V430M160 70V430M250 70V430M340 70V430M430 70V430"/></g><circle cx="250" cy="250" r="4" fill="#766044"/><g fill="#8a7459" font-size="15" text-anchor="middle" font-family="system-ui"><text x="70" y="32">A</text><text x="160" y="32">B</text><text x="250" y="32">C</text><text x="340" y="32">D</text><text x="430" y="32">E</text><text x="28" y="76">1</text><text x="28" y="166">2</text><text x="28" y="256">3</text><text x="28" y="346">4</text><text x="28" y="436">5</text></g></svg>
 <div id="points"></div></div></div>
 <div class="legend"><span><i class="territory-key black-key"></i>黒の空点</span><span><i class="territory-key white-key"></i>白の空点</span><span>印なし＝中立</span></div>
+<section id="basic-feedback" class="basic-training" hidden aria-label="手の効き目と練習操作">
+<p id="basic-explanation" role="status" aria-live="polite"></p>
+<div id="basic-demo-controls"><button id="basic-next" class="primary" type="button">次の一手を見る</button><button id="basic-replay" class="secondary" type="button">初めから見る</button></div>
+<div id="basic-compare-controls" hidden><button id="basic-good" class="secondary" type="button" aria-pressed="true">正しい手の結果</button><button id="basic-bad" class="secondary" type="button" aria-pressed="false">失敗する手の結果</button><p id="basic-comparison"></p></div>
+<div id="basic-challenge-controls" hidden><button id="basic-hint" class="secondary" type="button">ヒントを見る</button><button id="basic-retry" class="secondary" type="button">同じ配置で再挑戦</button></div>
+<p id="basic-scope" class="basic-rule"></p>
+</section>
 <div id="announcement" class="announcement" role="status" aria-live="polite">空いている交点をタップして、黒石を置きましょう。</div>
 <div class="primary-actions"><button id="pass" class="primary" type="button">パスする <span>→</span></button><button id="hint" class="secondary" type="button" aria-pressed="true">空点の色分け <span>ON</span></button></div>
 <div class="meta-actions"><span id="pass-count">連続パス 0 / 2</span><button id="undo" type="button" disabled>手を戻す</button><button id="stop-game" type="button">対局を終了</button></div>
@@ -34,5 +49,5 @@
 <footer>五路の余白 <span>囲う。空ける。ときには、待つ。</span><small>外部API・広告・トラッキングなし。対局は保存されません。</small></footer>
 </main>
 <dialog id="confirm-dialog"><p class="eyebrow">新しい盤へ</p><h2 id="dialog-title">今の対局を終えて始めますか？</h2><p>現在の対局は置き換わります。</p><div><button id="cancel-dialog" class="secondary">続ける</button><button id="confirm-dialog-button" class="primary">始める</button></div></dialog>
-<script type="module" src="app.js?v=20261017-8"></script>
+<script type="module" src="app.js?v=20261018-1"></script>
 </body></html>

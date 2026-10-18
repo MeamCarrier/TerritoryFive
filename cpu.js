@@ -136,3 +136,45 @@ export function lesson(name) {
   };
   return patterns[name]?.flatMap((row) => [...row].map((v) => v === 'B' ? 1 : v === 'W' ? 2 : 0));
 }
+
+// These are verified teaching lines, not a joseki book or an exhaustive solution.
+// All lessons use territory-only scoring and the same black-first rules as play.
+export const BASIC_LESSONS = [
+  {
+    id: 'take', title: '1. アタリを取る',
+    rows: ['.WBBB', 'WWBBB', 'BBBBB', 'B.BWW', 'BBB.W'],
+    objective: '白3子の最後の呼吸点を見つけ、取ってから勝ち切ろう。',
+    focus: [1, 5, 6], good: 0, bad: 16,
+    hint: '白のB1・A2・B2はひとつの石の集まり。最後の呼吸点はA1。',
+    principle: 'アタリは呼吸点があと1つの状態。その最後の空点に打つと、つながった相手の石を取れる。',
+    goodLine: [0, 6, null, null], badLine: [16, 23, null, null],
+    goodNotes: ['A1で白3子を捕獲。空いた場所も、白が入り直せばまだ確定した地ではない。', '白はB2へ入り直す。取った石は表示するが、この練習では得点に加えない。', '黒はB4の空点を残してパス。', '白もパス。黒の地1点、白0点で黒の勝ち。'],
+    badNote: 'B4を埋めると、黒の大きな石群の呼吸点はD5だけになる。白D5で取られ、連続パスで黒0点・白18点。取る手と、自分の安全を一緒に見る。',
+  },
+  {
+    id: 'connect', title: '2. 切られる前につなぐ',
+    rows: ['BBWW.', 'W.BBB', 'WBB.B', 'WBBBB', '.BBBB'],
+    objective: '左上の黒2子を仲間につなぎ、取られずに勝ち切ろう。',
+    focus: [0, 1], good: 6, bad: null,
+    hint: 'A1・B1の黒2子の呼吸点はB2だけ。B2なら右と下の黒にもつながる。',
+    principle: '石は上下左右でつながる。弱い石を仲間につなぐと、呼吸点を共有して助けられる。',
+    goodLine: [6, null, null], badLine: [null, 6, null, null],
+    goodNotes: ['B2で左上の黒2子が大きな黒の石群につながり、呼吸点が増える。', '白はパス。黒のD3は、まだ埋めない。', '黒もパス。黒の地1点、白0点で黒の勝ち。'],
+    badNote: 'つながずパスすると、白B2で左上の黒2子を取られる。その後に連続パスすると、黒1点・白2点で白の勝ち。今は地を埋めるより、弱い石を助ける。',
+  },
+  {
+    id: 'keep', title: '3. 地を埋めずに残す',
+    rows: ['BBWWW', '.BWWW', 'BBWW.', '.BWWW', 'BBWWW'],
+    objective: '黒の2つの空点を守り、余計な一手を打たずに勝とう。',
+    focus: [5, 15], good: null, bad: 5,
+    hint: '黒の地はA2とA4の2点、白はE3の1点。今の形なら、打たずにパスで残せる。',
+    principle: '地は囲った空点。完成した地を埋めると点が減る。この配置では、2つの独立した空点を残すことが石の安全にもつながる。',
+    goodLine: [null, null], badLine: [5, 15, null, null],
+    goodNotes: ['黒はパス。A2・A4の2つの地をそのまま残す。', '白もパス。黒2点、白1点で黒の勝ち。'],
+    badNote: 'A2を埋めると、黒の石群の呼吸点はA4だけになる。白A4で黒が全部取られ、連続パスで黒0点・白10点。ただ点が減るだけでなく、石を失う場合もある。',
+  },
+];
+
+export function basicLessonBoard(item) {
+  return item.rows.flatMap((row) => [...row].map((v) => v === 'B' ? 1 : v === 'W' ? 2 : 0));
+}
