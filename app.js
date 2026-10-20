@@ -37,7 +37,8 @@ function cancelCpu() {
 
 function colorName(color) { return color === 1 ? '黒' : '白'; }
 function coordinate(index) {
-  return `${String.fromCharCode(65 + index % SIZE)}${Math.floor(index / SIZE) + 1}`;
+  const vertical = ['一', '二', '三', '四', '五'][Math.floor(index / SIZE)];
+  return `${index % SIZE + 1}${vertical}`;
 }
 function isHumanTurn() { return !draftBoard && !game.over && game.turn === (game.playerColor ?? 1) && !cpuThinking; }
 
