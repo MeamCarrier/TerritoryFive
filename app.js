@@ -1,12 +1,11 @@
-import { SIZE, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261020-1';
-import { chooseMove, lesson, BASIC_LESSONS, basicLessonBoard } from './cpu.js?v=20261020-1';
+import { SIZE, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261020-2';
+import { chooseMove } from './cpu.js?v=20261020-2';
 
 const $ = (id) => document.getElementById(id);
 const boardNode = $('points');
 const phaseNode = $('phase');
 const announcement = $('announcement');
 const resultNode = $('result');
-const HISTORY_NAMES = { pass: 'パスで余白を残す', capture: '取って空点を広げる', space: '広い空間を見る' };
 const MOVE_ERRORS = {
   occupied: 'そこにはすでに石があります。',
   suicide: '自分の石の呼吸点がなくなる手は打てません。',
@@ -20,10 +19,9 @@ let cpuThinking = false;
 let generation = 0;
 let draftBoard = null;
 let draftIncludeCaptures = false;
-let training = null;
 function makeCpuWorker() {
   try {
-    return new Worker(new URL('./cpu-worker.js?v=20261020-1', import.meta.url), { type: 'module' });
+    return new Worker(new URL('./cpu-worker.js?v=20261020-2', import.meta.url), { type: 'module' });
   } catch {
     return null;
   }
@@ -41,71 +39,7 @@ function colorName(color) { return color === 1 ? '黒' : '白'; }
 function coordinate(index) {
   return `${String.fromCharCode(65 + index % SIZE)}${Math.floor(index / SIZE) + 1}`;
 }
-function isHumanTurn() { return !draftBoard && !game.over && game.turn === 1 && !cpuThinking && (!training || training.mode === 'challenge'); }
-
-function teachingLine(item, moves) {
-  let state = setupGame(basicLessonBoard(item));
-  for (const index of moves) {
-    const next = play(state, index);
-    if (!next.ok) throw new Error('invalid-teaching-line');
-    state = next.state;
-  }
-  return state;
-}
-
-function startTraining(mode = 'demo', branch = 'good') {
-  const item = BASIC_LESSONS.find((entry) => entry.id === $('basic-select').value) ?? BASIC_LESSONS[0];
-  cancelCpu();
-  draftBoard = null;
-  training = { item, mode, branch, step: 0, hinted: false };
-  game = mode === 'compare' ? teachingLine(item, branch === 'good' ? item.goodLine : item.badLine) : setupGame(basicLessonBoard(item));
-  setAnnouncement(mode === 'challenge' ? 'ヒントなしで挑戦。黒の手を考え、最後は連続パスで勝敗を確かめよう。' : 'お手本・比較では盤への着手はできません。手順と変化を見てみよう。');
-  render();
-}
-
-function renderTraining() {
-  $('basic-training').hidden = !training;
-  $('basic-feedback').hidden = !training;
-  $('normal-mode').setAttribute('aria-pressed', String(!training));
-  $('learn-mode').setAttribute('aria-pressed', String(Boolean(training)));
-  $('again').textContent = training ? '同じ配置で再挑戦' : 'もう一局、余白をつくる';
-  if (!training) return;
-  const { item, mode, step, hinted, branch } = training;
-  $('basic-objective').textContent = item.objective;
-  for (const stage of ['demo', 'compare', 'challenge']) {
-    $(`basic-${stage}`).setAttribute('aria-pressed', String(mode === stage));
-    $(`basic-${stage}-controls`).hidden = mode !== stage;
-  }
-  const scope = $('basic-scope');
-  scope.textContent = mode === 'challenge' ? '白は通常対局と同じCPUが考えます。お手本と違う応手もあります。あらゆる応手への必勝を保証する問題ではありません。' : 'お手本と比較は、決められた白の応手での結果です。どんな応手にも勝てるという意味ではありません。';
-  let text = item.principle;
-  if (mode === 'demo') {
-    text = step === 0 ? `${item.principle} 「次の一手を見る」で1手ずつ進めよう。` : `${step}手目／${item.goodLine.length}手：${item.goodNotes[step - 1]}`;
-    $('basic-next').disabled = step >= item.goodLine.length;
-    $('basic-next').textContent = step >= item.goodLine.length ? 'お手本は完了 · 次は「比べる」へ' : '次の一手を見る';
-  } else if (mode === 'compare') {
-    text = branch === 'good' ? `${item.principle} ${item.goodNotes.at(-1)}` : item.badNote;
-    const summary = (moves) => {
-      const state = teachingLine(item, moves);
-      const totals = score(state.board, state.captures, false, state.rules, state.komi);
-      const first = moves[0] === null ? 'パス' : coordinate(moves[0]);
-      return `${first}から：黒${totals.black}点・白${totals.white}点`;
-    };
-    $('basic-comparison').textContent = `同じ初期配置から終局まで比較。正しい手 ${summary(item.goodLine)} ／ 失敗する手 ${summary(item.badLine)}。手の記録で全手順を確認できます。`;
-    $('basic-good').setAttribute('aria-pressed', String(branch === 'good'));
-    $('basic-bad').setAttribute('aria-pressed', String(branch === 'bad'));
-  } else {
-    text = game.log.length === 0 ? item.objective : '途中の点数だけで決めず、石の安全と最後に残す空点を考えよう。';
-    if (hinted) text += ` ヒント：${item.hint}`;
-    $('basic-hint').disabled = game.over;
-    if (game.over) {
-      if (game.reason !== 'passes') text = '今回は任意終了。達成にはせず、同じ配置から再挑戦できます。';
-      else if (game.winner === 1) text = `${hinted ? 'ヒントを使って達成！' : '自力で達成！'} ${game.log[0]?.index === item.good ? '覚えた基本の手で' : 'お手本とは別の手で'}CPUに勝ちました。${item.principle}`;
-      else text = `${game.winner === 0 ? '今回は引き分け。' : '今回は白の勝ち。'} お手本や比較で効き目を見直し、もう一度試そう。`;
-    }
-  }
-  $('basic-explanation').textContent = text;
-}
+function isHumanTurn() { return !draftBoard && !game.over && game.turn === 1 && !cpuThinking; }
 
 function setAnnouncement(message, error = false) {
   announcement.textContent = message;
@@ -113,7 +47,9 @@ function setAnnouncement(message, error = false) {
 }
 
 function scoreTrend() {
-  let replay = setupGame(game.initialBoard ?? Array(SIZE * SIZE).fill(0), game.rules, game.komi ?? 0);
+  // Replay legality under the permissive rule so changing rule mode mid-game
+  // does not truncate earlier moves that are no longer legal under simple ko.
+  let replay = setupGame(game.initialBoard ?? Array(SIZE * SIZE).fill(0), RULES.CUSTOM, 0);
   const points = [{ ...score(replay.board, replay.captures, game.includeCaptures, game.rules, game.komi), move: 0 }];
   for (const [index, move] of game.log.entries()) {
     const next = play(replay, move.index);
@@ -182,10 +118,9 @@ function render() {
   const totals = score(board, game.captures, game.includeCaptures, game.rules, game.komi);
   const humanTurn = isHumanTurn();
   const ended = game.over;
-  const fixedLine = Boolean(training && training.mode !== 'challenge');
-  $('black-who').textContent = fixedLine ? 'お手本' : 'あなた';
-  $('white-who').textContent = fixedLine ? '固定応手' : 'CPU';
-  phaseNode.textContent = training && training.mode !== 'challenge' ? (training.mode === 'demo' ? 'お手本の手順' : '比較：終局した盤面') : draftBoard ? '置き石の配置中' : game.phase === 'agreement' ? '死活確認・終局前' : ended ? '対局終了' : cpuThinking ? 'CPUが読みを進めています…' : humanTurn ? 'あなた（黒）の手番' : 'CPU（白）の手番';
+  $('black-who').textContent = 'あなた';
+  $('white-who').textContent = 'CPU';
+  phaseNode.textContent = draftBoard ? '置き石の配置中' : game.phase === 'agreement' ? '死活確認・終局前' : ended ? '対局終了' : cpuThinking ? 'CPUが読みを進めています…' : humanTurn ? 'あなた（黒）の手番' : 'CPU（白）の手番';
   $('move-no').textContent = `第 ${game.moveNumber + 1} 手`;
   $('black-points').innerHTML = `${totals.black}<small>点</small>`;
   $('white-points').innerHTML = `${totals.white}<small>点</small>`;
@@ -193,23 +128,24 @@ function render() {
   $('white-breakdown').textContent = `地 ${area.white}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[2]}子${game.rules === RULES.JAPANESE ? ` + コミ ${game.komi}` : ''}`;
   const setupRules = draftBoard ? $('ruleset').value : game.rules ?? RULES.CUSTOM;
   $('include-captures').checked = game.rules === RULES.JAPANESE || (draftBoard ? draftIncludeCaptures : game.includeCaptures);
-  $('include-captures').disabled = setupRules === RULES.JAPANESE || (ended && !draftBoard) || Boolean(training);
+  const rulesLocked = !draftBoard && (ended || game.phase === 'agreement');
+  $('include-captures').disabled = setupRules === RULES.JAPANESE || rulesLocked;
   $('ruleset').value = setupRules;
-  $('ruleset').disabled = !draftBoard || Boolean(training);
+  $('ruleset').disabled = rulesLocked;
   if (!draftBoard) {
     $('komi').value = String(game.komi ?? 0);
   }
-  $('komi').disabled = !draftBoard || setupRules !== RULES.JAPANESE || Boolean(training);
+  $('komi').disabled = setupRules !== RULES.JAPANESE || rulesLocked;
   $('komi-row').hidden = setupRules !== RULES.JAPANESE;
   $('komi').hidden = setupRules !== RULES.JAPANESE;
-  $('share-setup').disabled = Boolean(training);
-  $('agreement-controls').hidden = game.phase !== 'agreement' || Boolean(training);
+  $('share-setup').disabled = false;
+  $('agreement-controls').hidden = game.phase !== 'agreement';
   $('pass-count').textContent = `連続パス ${Math.min(game.passes, 2)} / 2`;
   $('pass').disabled = !humanTurn || game.phase === 'agreement';
-  $('stop-game').disabled = ended || Boolean(draftBoard) || Boolean(training && training.mode !== 'challenge');
-  $('undo').disabled = Boolean(draftBoard) || Boolean(training && training.mode !== 'challenge') || !game.log.some((move) => move.color === 1);
+  $('stop-game').disabled = ended || Boolean(draftBoard);
+  $('undo').disabled = Boolean(draftBoard) || !game.log.some((move) => move.color === 1);
   $('setup-controls').hidden = !draftBoard;
-  $('edit-setup').disabled = Boolean(draftBoard) || Boolean(training);
+  $('edit-setup').disabled = Boolean(draftBoard) || game.phase === 'agreement';
   $('black-score').classList.toggle('active-player', !draftBoard && game.phase === 'play' && !ended && game.turn === 1);
   $('white-score').classList.toggle('active-player', !draftBoard && game.phase === 'play' && !ended && game.turn === 2);
 
@@ -221,10 +157,6 @@ function render() {
     const owner = showTerritory ? area.owners[index] : 0;
     point.type = 'button';
     point.className = `point${owner === 1 ? ' owned-black' : owner === 2 ? ' owned-white' : ''}${!draftBoard && game.lastMove === index ? ' last' : ''}${window.__deadMarks?.has(index) ? ' dead-marked' : ''}`;
-    if (training && (training.mode !== 'challenge' || training.hinted)) {
-      if (training.item.focus.includes(index)) point.className += ' teaching-focus';
-      if (training.item.good === index && game.board[index] === 0) point.className += ' teaching-target';
-    }
     point.style.left = `${14 + col * 18}%`;
     point.style.top = `${14 + row * 18}%`;
     point.setAttribute('aria-label', `${coordinate(index)} ${stone ? `${colorName(stone)}の石` : '空点'}${owner ? `・${colorName(owner)}の地` : ''}`);
@@ -259,7 +191,7 @@ function render() {
   history.replaceChildren();
   game.log.forEach((move, index) => {
     const item = document.createElement('li');
-    const player = move.color === 1 ? (fixedLine ? '黒（お手本）' : 'あなた（黒）') : (fixedLine ? '白（固定応手）' : 'CPU（白）');
+    const player = move.color === 1 ? 'あなた（黒）' : 'CPU（白）';
     const action = move.index === null ? 'パス' : coordinate(move.index);
     item.textContent = `${index + 1}. ${player}：${action}${move.captured.length ? `、${move.captured.length}子を捕獲` : ''}`;
     history.append(item);
@@ -267,7 +199,6 @@ function render() {
 
   resultNode.hidden = !ended || Boolean(draftBoard);
   if (ended && !draftBoard) renderResult(totals);
-  renderTraining();
 }
 
 $('score-chart-panel').addEventListener('toggle', () => {
@@ -317,7 +248,7 @@ function humanMove(index) {
 }
 
 function scheduleCpu() {
-  if (draftBoard || game.over || game.turn !== 2 || cpuThinking || (training && training.mode !== 'challenge')) return;
+  if (draftBoard || game.over || game.turn !== 2 || cpuThinking) return;
   cpuThinking = true;
   const token = generation;
   setAnnouncement('CPUが数手先を読んでいます。');
@@ -357,9 +288,8 @@ function stopGameNow() {
   resultNode.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-function beginGame(nextGame, message, keepTraining = false) {
+function beginGame(nextGame, message) {
   cancelCpu();
-  if (!keepTraining) training = null;
   draftBoard = null;
   game = nextGame;
   window.__deadMarks = new Set();
@@ -376,10 +306,10 @@ $('undo').addEventListener('click', () => {
   if (draftBoard) return;
   const restored = undoHumanTurn(game);
   if (!restored) return;
-  beginGame(restored, 'あなたが打つ前に戻しました。別の手を試せます。', true);
+  beginGame(restored, 'あなたが打つ前に戻しました。別の手を試せます。');
 });
 $('edit-setup').addEventListener('click', () => {
-  if (training) return;
+  if (game.phase === 'agreement') return;
   cancelCpu();
   $('ruleset').value = game.rules ?? RULES.CUSTOM;
   $('komi').value = String(game.komi ?? 0);
@@ -415,7 +345,30 @@ $('ruleset').addEventListener('change', (event) => {
     draftIncludeCaptures = japanese || $('include-captures').checked;
     $('include-captures').checked = draftIncludeCaptures;
     $('include-captures').disabled = japanese;
+    render();
+    return;
   }
+  if (game.over || game.phase === 'agreement') return;
+  const wasThinking = cpuThinking;
+  if (wasThinking) cancelCpu();
+  game = {
+    ...game,
+    rules: japanese ? RULES.JAPANESE : RULES.CUSTOM,
+    komi: japanese ? Number($('komi').value) : 0,
+    includeCaptures: japanese || game.includeCaptures,
+  };
+  setAnnouncement(`対局中のルールを${japanese ? '日本式（簡略対局）' : '五路の余白（独自ルール）'}へ変更しました。${wasThinking ? 'CPUは新しい条件で読み直します。' : ''}`);
+  render();
+  scheduleCpu();
+});
+$('komi').addEventListener('change', (event) => {
+  if (draftBoard || game.over || game.phase === 'agreement' || game.rules !== RULES.JAPANESE) return;
+  const wasThinking = cpuThinking;
+  if (wasThinking) cancelCpu();
+  game = { ...game, komi: Number(event.currentTarget.value) };
+  setAnnouncement(`コミを${game.komi}目に変更しました。${wasThinking ? 'CPUは新しい条件で読み直します。' : ''}`);
+  render();
+  scheduleCpu();
 });
 $('share-setup').addEventListener('click', async () => {
   try {
@@ -451,7 +404,6 @@ $('resume-game').addEventListener('click', () => {
 });
 $('hint').addEventListener('click', () => { showTerritory = !showTerritory; render(); });
 $('include-captures').addEventListener('change', (event) => {
-  if (training) return;
   if (draftBoard) {
     draftIncludeCaptures = event.currentTarget.checked;
     return;
@@ -468,45 +420,12 @@ $('new-game').addEventListener('click', () => {
   if (game.over) return beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。');
   $('confirm-dialog').showModal();
 });
-$('again').addEventListener('click', () => training ? startTraining('challenge') : beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。'));
+$('again').addEventListener('click', () => beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。'));
 $('cancel-dialog').addEventListener('click', () => $('confirm-dialog').close());
 $('confirm-dialog-button').addEventListener('click', () => {
   $('confirm-dialog').close();
   beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。');
 });
-$('load-lesson').addEventListener('click', () => {
-  const name = $('lesson-select').value;
-  const board = lesson(name);
-  if (!board) return;
-  const next = setupGame(board);
-  beginGame(next, `${HISTORY_NAMES[name]}の練習盤です。黒の手を考えてください。`);
-});
-
-$('learn-mode').addEventListener('click', () => { if (!training) startTraining(); });
-$('normal-mode').addEventListener('click', () => { if (training) beginGame(newGame(), '通常対局に戻りました。黒の初手を打ってください。'); });
-$('basic-select').addEventListener('change', () => startTraining());
-for (const mode of ['demo', 'compare', 'challenge']) {
-  $(`basic-${mode}`).addEventListener('click', () => startTraining(mode));
-}
-$('basic-next').addEventListener('click', () => {
-  if (!training || training.mode !== 'demo' || training.step >= training.item.goodLine.length) return;
-  const next = play(game, training.item.goodLine[training.step]);
-  if (!next.ok) return;
-  game = next.state;
-  training.step += 1;
-  setAnnouncement(training.item.goodNotes[training.step - 1]);
-  render();
-});
-$('basic-replay').addEventListener('click', () => startTraining());
-$('basic-good').addEventListener('click', () => startTraining('compare', 'good'));
-$('basic-bad').addEventListener('click', () => startTraining('compare', 'bad'));
-$('basic-retry').addEventListener('click', () => startTraining('challenge'));
-$('basic-hint').addEventListener('click', () => {
-  if (!training || training.mode !== 'challenge') return;
-  training.hinted = true;
-  render();
-});
-
 let sharedSetup = decodeSetup(location.hash);
 let invalidSharedSetup = false;
 if (sharedSetup) {
