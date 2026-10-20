@@ -5,10 +5,10 @@ const MAX_DEPTH = 9;
 const NODE_BUDGET = 140_000;
 const SEARCH_LIMIT = Symbol('search-limit');
 
-function evaluate(board, color, captures, includeCaptures) {
+function evaluate(board, color, captures, includeCaptures, rules = 'custom', komi = 0) {
   const area = territory(board);
   const sign = color === 1 ? 1 : -1;
-  let value = sign * ((area.black - area.white) + (includeCaptures ? captures[1] - captures[2] : 0)) * 3.5;
+  let value = sign * ((area.black - area.white) + (includeCaptures ? captures[1] - captures[2] : 0) - (rules === 'japanese' ? komi : 0)) * 3.5;
   const seen = new Set();
 
   for (let i = 0; i < board.length; i += 1) {
@@ -64,14 +64,14 @@ function orderedMoves(board, color, includeCaptures) {
     .sort((a, b) => b.priority - a.priority);
 }
 
-function search(board, color, captures, passes, depth, alpha, beta, budget, includeCaptures) {
+function search(board, color, captures, passes, depth, alpha, beta, budget, includeCaptures, rules, komi) {
   budget.nodes += 1;
   if (budget.nodes > NODE_BUDGET) throw SEARCH_LIMIT;
   if (passes >= 2) {
-    const result = score(board, captures, includeCaptures);
+    const result = score(board, captures, includeCaptures, rules, komi);
     return (color === 1 ? result.black - result.white : result.white - result.black) * 10000;
   }
-  if (depth === 0) return evaluate(board, color, captures, includeCaptures);
+  if (depth === 0) return evaluate(board, color, captures, includeCaptures, rules, komi);
 
   let best = -Infinity;
   const nextColor = 3 - color;
@@ -81,7 +81,7 @@ function search(board, color, captures, passes, depth, alpha, beta, budget, incl
   for (const move of moves) {
     const nextPasses = move.index === PASS ? passes + 1 : 0;
     const nextCaptures = { ...captures, [color]: captures[color] + move.captured.length };
-    const value = -search(move.board, nextColor, nextCaptures, nextPasses, depth - 1, -beta, -alpha, budget, includeCaptures);
+    const value = -search(move.board, nextColor, nextCaptures, nextPasses, depth - 1, -beta, -alpha, budget, includeCaptures, rules, komi);
     if (value > best) best = value;
     if (value > alpha) alpha = value;
     if (alpha >= beta) break;
@@ -93,6 +93,8 @@ export function chooseMove(state) {
   if (!state || state.over) return { index: PASS, reason: '対局は終了しています。' };
   const color = state.turn;
   const includeCaptures = state.includeCaptures !== false;
+  const rules = state.rules ?? 'custom';
+  const komi = state.komi ?? 0;
   let chosen = { index: PASS, board: state.board, captured: [], value: -Infinity };
   let previous = null;
   const budget = { nodes: 0 };
@@ -109,7 +111,10 @@ export function chooseMove(state) {
       for (const move of moves) {
         const nextPasses = move.index === PASS ? state.passes + 1 : 0;
         const nextCaptures = { ...state.captures, [color]: state.captures[color] + move.captured.length };
-        const value = -search(move.board, 3 - color, nextCaptures, nextPasses, depth - 1, -Infinity, -alpha, budget, includeCaptures);
+        const prior = state.log?.at(-1);
+        if (rules === 'japanese' && prior?.index !== null && prior?.captured?.length === 1 && move.index !== PASS && state.history?.length > 1 &&
+            move.board.join('') === state.history[state.history.length - 2].split(':')[0]) continue;
+        const value = -search(move.board, 3 - color, nextCaptures, nextPasses, depth - 1, -Infinity, -alpha, budget, includeCaptures, rules, komi);
         if (value > iterationBest.value) {
           iterationBest = { ...move, value };
           alpha = value;

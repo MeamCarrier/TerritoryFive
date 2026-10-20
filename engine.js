@@ -1,5 +1,31 @@
 export const SIZE = 5;
 const POINTS = SIZE * SIZE;
+export const RULES = Object.freeze({ CUSTOM: 'custom', JAPANESE: 'japanese' });
+
+// Share only the starting board and rule settings; the fragment stays local to
+// the browser and is not sent to the hosting server.
+export function encodeSetup(board, rules = RULES.CUSTOM, komi = 0, includeCaptures = false) {
+  if (!validBoard(board) || !Object.values(RULES).includes(rules)) throw new TypeError('invalid-setup');
+  if (!Number.isFinite(komi) || komi < 0 || komi > 25 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-komi');
+  const cells = board.map((point) => point === 1 ? 'B' : point === 2 ? 'W' : '.').join('');
+  return `#tf=1&board=${cells}&rules=${rules}&komi=${komi}&captures=${rules === RULES.JAPANESE ? 1 : Number(Boolean(includeCaptures))}`;
+}
+
+export function decodeSetup(hash) {
+  try {
+    const params = new URLSearchParams(String(hash).replace(/^#/, ''));
+    if (params.get('tf') !== '1') return null;
+    const cells = params.get('board');
+    const rules = params.get('rules');
+    const komiText = params.get('komi') ?? '0';
+    const capturesText = params.get('captures') ?? '0';
+    const komi = Number(komiText);
+    if (!cells || cells.length !== POINTS || !/^[.BW]{25}$/.test(cells) ||
+        !Object.values(RULES).includes(rules) ||
+        !/^(?:0|[1-9]\d?)(?:\.5)?$/.test(komiText) || komi > 25 || !['0', '1'].includes(capturesText)) return null;
+    return { board: [...cells].map((cell) => cell === 'B' ? 1 : cell === 'W' ? 2 : 0), rules, komi, includeCaptures: rules === RULES.JAPANESE || capturesText === '1' };
+  } catch { return null; }
+}
 
 export function neighbors(index) {
   if (!Number.isInteger(index) || index < 0 || index >= POINTS) return [];
@@ -123,16 +149,18 @@ export function territory(board) {
   return { black, white, neutral, owners };
 }
 
-export function score(board, captures = {}, includeCaptures = true) {
+export function score(board, captures = {}, includeCaptures = true, rules = RULES.CUSTOM, komi = 0) {
   const area = territory(board);
   const captured = { 1: captures[1] ?? 0, 2: captures[2] ?? 0 };
+  const countCaptures = rules === RULES.JAPANESE || includeCaptures;
   return {
     ...area,
     territory: { black: area.black, white: area.white },
     captures: captured,
-    black: area.black + (includeCaptures ? captured[1] : 0),
-    white: area.white + (includeCaptures ? captured[2] : 0),
-    includeCaptures,
+    black: area.black + (countCaptures ? captured[1] : 0),
+    white: area.white + (countCaptures ? captured[2] : 0) + (rules === RULES.JAPANESE ? komi : 0),
+    includeCaptures: countCaptures,
+    rules, komi: rules === RULES.JAPANESE ? komi : 0,
   };
 }
 
@@ -141,8 +169,11 @@ function positionKey(board, nextTurn) {
 }
 
 function finishByPasses(state) {
+  if (state.rules === RULES.JAPANESE) {
+    return { ...state, passes: 2, phase: 'agreement', over: false, reason: '', result: null, winner: null };
+  }
   const result = territory(state.board);
-  const totals = score(state.board, state.captures, state.includeCaptures !== false);
+  const totals = score(state.board, state.captures, state.includeCaptures !== false, state.rules, state.komi ?? 0);
   const winner = totals.black > totals.white ? 1 : totals.white > totals.black ? 2 : 0;
   return { ...state, over: true, reason: 'passes', result, winner };
 }
@@ -160,6 +191,9 @@ export function newGame() {
     lastMove: null,
     captures: { 1: 0, 2: 0 },
     includeCaptures: false,
+    rules: RULES.CUSTOM,
+    komi: 0,
+    phase: 'play',
     history: [positionKey(board, 1)],
     log: [],
   };
@@ -169,7 +203,7 @@ export function play(state, indexOrNull) {
   if (!state || !validBoard(state.board) || (state.turn !== 1 && state.turn !== 2)) {
     return { ok: false, state, captured: [], error: 'invalid-state' };
   }
-  if (state.over) return { ok: false, state, captured: [], error: 'game-over' };
+  if (state.over || state.phase === 'agreement') return { ok: false, state, captured: [], error: 'game-over' };
 
   const color = state.turn;
   const nextTurn = color === 1 ? 2 : 1;
@@ -188,6 +222,11 @@ export function play(state, indexOrNull) {
 
   const move = tryMove(state.board, color, indexOrNull);
   if (!move.ok) return { ok: false, state, captured: [], error: move.error };
+  const previousMove = state.log?.at(-1);
+  if (state.rules === RULES.JAPANESE && previousMove?.index !== null && previousMove?.captured?.length === 1 && state.history?.length > 1 &&
+      positionKey(move.board, nextTurn) === state.history[state.history.length - 2]) {
+    return { ok: false, state, captured: [], error: 'ko' };
+  }
 
   const captures = { ...state.captures, [color]: state.captures[color] + move.captured.length };
   const nextState = {
@@ -220,14 +259,39 @@ export function stopGame(state) {
   return { ...state, over: true, reason: 'stopped', result: territory(state.board), winner: null };
 }
 
-export function setupGame(board) {
+export function finishAgreement(state, deadStones = []) {
+  if (!state || state.phase !== 'agreement') return { ok: false, state, error: 'not-agreement' };
+  const board = state.board.slice();
+  const removed = new Set();
+  for (const index of deadStones) {
+    if (!Number.isInteger(index) || index < 0 || index >= POINTS || !board[index]) continue;
+    for (const stone of group(board, index).stones) removed.add(stone);
+  }
+  const captures = { ...state.captures };
+  for (const index of removed) {
+    captures[3 - board[index]] += 1;
+    board[index] = 0;
+  }
+  const result = territory(board);
+  const totals = score(board, captures, true, RULES.JAPANESE, state.komi ?? 0);
+  const winner = totals.black > totals.white ? 1 : totals.white > totals.black ? 2 : 0;
+  return { ok: true, state: { ...state, board, captures, phase: 'finished', over: true, reason: 'passes', result, winner } };
+}
+
+export function resumeAfterAgreement(state) {
+  if (!state || state.phase !== 'agreement') return state;
+  return { ...state, phase: 'play', passes: 0 };
+}
+
+export function setupGame(board, rules = RULES.CUSTOM, komi = 0, includeCaptures = false) {
   if (!validBoard(board)) throw new TypeError('invalid-board');
+  if (!Object.values(RULES).includes(rules) || !Number.isFinite(komi) || komi < 0 || komi > 25 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-rules');
   for (let index = 0; index < POINTS; index += 1) {
     if (board[index] && group(board, index).liberties.length === 0) {
       throw new Error('no-liberties');
     }
   }
-  return { ...newGame(), board: board.slice(), initialBoard: board.slice(), history: [positionKey(board, 1)] };
+  return { ...newGame(), board: board.slice(), initialBoard: board.slice(), rules, komi: rules === RULES.JAPANESE ? komi : 0, includeCaptures: rules === RULES.JAPANESE || Boolean(includeCaptures), history: [positionKey(board, 1)] };
 }
 
 // Return to just before the latest human move, including any CPU reply.
@@ -235,7 +299,7 @@ export function setupGame(board) {
 export function undoHumanTurn(state) {
   const lastHuman = state.log.findLastIndex((move) => move.color === 1);
   if (lastHuman < 0) return null;
-  let restored = setupGame(state.initialBoard ?? Array(POINTS).fill(0));
+  let restored = setupGame(state.initialBoard ?? Array(POINTS).fill(0), state.rules ?? RULES.CUSTOM, state.komi ?? 0, state.includeCaptures);
   for (const move of state.log.slice(0, lastHuman)) {
     const result = play(restored, move.index);
     if (!result.ok) throw new Error('invalid-history');

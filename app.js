@@ -1,5 +1,5 @@
-import { SIZE, newGame, play, territory, score, stopGame, setupGame, undoHumanTurn } from './engine.js?v=20261017-3';
-import { chooseMove, lesson, BASIC_LESSONS, basicLessonBoard } from './cpu.js?v=20261018-1';
+import { SIZE, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261020-1';
+import { chooseMove, lesson, BASIC_LESSONS, basicLessonBoard } from './cpu.js?v=20261020-1';
 
 const $ = (id) => document.getElementById(id);
 const boardNode = $('points');
@@ -11,6 +11,7 @@ const MOVE_ERRORS = {
   occupied: 'そこにはすでに石があります。',
   suicide: '自分の石の呼吸点がなくなる手は打てません。',
   'invalid-index': 'その交点には打てません。',
+  ko: 'コウの直後の取り返しはできません。別の場所に打ってから試してください。',
 };
 
 let game = newGame();
@@ -21,7 +22,7 @@ let draftBoard = null;
 let training = null;
 function makeCpuWorker() {
   try {
-    return new Worker(new URL('./cpu-worker.js?v=20261017-2', import.meta.url), { type: 'module' });
+    return new Worker(new URL('./cpu-worker.js?v=20261020-1', import.meta.url), { type: 'module' });
   } catch {
     return null;
   }
@@ -85,7 +86,7 @@ function renderTraining() {
     text = branch === 'good' ? `${item.principle} ${item.goodNotes.at(-1)}` : item.badNote;
     const summary = (moves) => {
       const state = teachingLine(item, moves);
-      const totals = score(state.board, state.captures, false);
+      const totals = score(state.board, state.captures, false, state.rules, state.komi);
       const first = moves[0] === null ? 'パス' : coordinate(moves[0]);
       return `${first}から：黒${totals.black}点・白${totals.white}点`;
     };
@@ -111,13 +112,13 @@ function setAnnouncement(message, error = false) {
 }
 
 function scoreTrend() {
-  let replay = setupGame(game.initialBoard ?? Array(SIZE * SIZE).fill(0));
-  const points = [{ ...score(replay.board, replay.captures, game.includeCaptures), move: 0 }];
+  let replay = setupGame(game.initialBoard ?? Array(SIZE * SIZE).fill(0), game.rules, game.komi ?? 0);
+  const points = [{ ...score(replay.board, replay.captures, game.includeCaptures, game.rules, game.komi), move: 0 }];
   for (const [index, move] of game.log.entries()) {
     const next = play(replay, move.index);
     if (!next.ok) break;
     replay = next.state;
-    points.push({ ...score(replay.board, replay.captures, game.includeCaptures), move: index + 1 });
+    points.push({ ...score(replay.board, replay.captures, game.includeCaptures, game.rules, game.komi), move: index + 1 });
   }
   return points.slice(-7);
 }
@@ -177,28 +178,41 @@ function renderScoreChart() {
 function render() {
   const board = draftBoard ?? game.board;
   const area = territory(board);
-  const totals = score(board, game.captures, game.includeCaptures);
+  const totals = score(board, game.captures, game.includeCaptures, game.rules, game.komi);
   const humanTurn = isHumanTurn();
   const ended = game.over;
   const fixedLine = Boolean(training && training.mode !== 'challenge');
   $('black-who').textContent = fixedLine ? 'お手本' : 'あなた';
   $('white-who').textContent = fixedLine ? '固定応手' : 'CPU';
-  phaseNode.textContent = training && training.mode !== 'challenge' ? (training.mode === 'demo' ? 'お手本の手順' : '比較：終局した盤面') : draftBoard ? '置き石の配置中' : ended ? '対局終了' : cpuThinking ? 'CPUが読みを進めています…' : humanTurn ? 'あなた（黒）の手番' : 'CPU（白）の手番';
+  phaseNode.textContent = training && training.mode !== 'challenge' ? (training.mode === 'demo' ? 'お手本の手順' : '比較：終局した盤面') : draftBoard ? '置き石の配置中' : game.phase === 'agreement' ? '死活確認・終局前' : ended ? '対局終了' : cpuThinking ? 'CPUが読みを進めています…' : humanTurn ? 'あなた（黒）の手番' : 'CPU（白）の手番';
   $('move-no').textContent = `第 ${game.moveNumber + 1} 手`;
   $('black-points').innerHTML = `${totals.black}<small>点</small>`;
   $('white-points').innerHTML = `${totals.white}<small>点</small>`;
   $('black-breakdown').textContent = `地 ${area.black}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[1]}子`;
-  $('white-breakdown').textContent = `地 ${area.white}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[2]}子`;
-  $('include-captures').checked = game.includeCaptures;
-  $('include-captures').disabled = ended || Boolean(draftBoard) || Boolean(training);
+  $('white-breakdown').textContent = `地 ${area.white}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[2]}子${game.rules === RULES.JAPANESE ? ` + コミ ${game.komi}` : ''}`;
+  $('include-captures').checked = game.rules === RULES.JAPANESE || game.includeCaptures;
+  $('include-captures').disabled = game.rules === RULES.JAPANESE || ended || Boolean(draftBoard) || Boolean(training);
+  const setupRules = draftBoard ? $('ruleset').value : game.rules ?? RULES.CUSTOM;
+  $('ruleset').value = setupRules;
+  $('ruleset').disabled = !draftBoard || Boolean(training);
+  if (!draftBoard) {
+    $('komi').value = String(game.komi ?? 0);
+    $('setup-captures').checked = game.rules === RULES.JAPANESE || game.includeCaptures;
+  }
+  $('komi').disabled = !draftBoard || setupRules !== RULES.JAPANESE || Boolean(training);
+  $('komi-row').hidden = setupRules !== RULES.JAPANESE;
+  $('komi').hidden = setupRules !== RULES.JAPANESE;
+  $('setup-captures').disabled = setupRules === RULES.JAPANESE || !draftBoard || Boolean(training);
+  $('share-setup').disabled = Boolean(training);
+  $('agreement-controls').hidden = game.phase !== 'agreement' || Boolean(training);
   $('pass-count').textContent = `連続パス ${Math.min(game.passes, 2)} / 2`;
-  $('pass').disabled = !humanTurn;
+  $('pass').disabled = !humanTurn || game.phase === 'agreement';
   $('stop-game').disabled = ended || Boolean(draftBoard) || Boolean(training && training.mode !== 'challenge');
   $('undo').disabled = Boolean(draftBoard) || Boolean(training && training.mode !== 'challenge') || !game.log.some((move) => move.color === 1);
   $('setup-controls').hidden = !draftBoard;
   $('edit-setup').disabled = Boolean(draftBoard) || Boolean(training);
-  $('black-score').classList.toggle('active-player', !draftBoard && !ended && game.turn === 1);
-  $('white-score').classList.toggle('active-player', !draftBoard && !ended && game.turn === 2);
+  $('black-score').classList.toggle('active-player', !draftBoard && game.phase === 'play' && !ended && game.turn === 1);
+  $('white-score').classList.toggle('active-player', !draftBoard && game.phase === 'play' && !ended && game.turn === 2);
 
   boardNode.replaceChildren();
   board.forEach((stone, index) => {
@@ -207,7 +221,7 @@ function render() {
     const col = index % SIZE;
     const owner = showTerritory ? area.owners[index] : 0;
     point.type = 'button';
-    point.className = `point${owner === 1 ? ' owned-black' : owner === 2 ? ' owned-white' : ''}${!draftBoard && game.lastMove === index ? ' last' : ''}`;
+    point.className = `point${owner === 1 ? ' owned-black' : owner === 2 ? ' owned-white' : ''}${!draftBoard && game.lastMove === index ? ' last' : ''}${window.__deadMarks?.has(index) ? ' dead-marked' : ''}`;
     if (training && (training.mode !== 'challenge' || training.hinted)) {
       if (training.item.focus.includes(index)) point.className += ' teaching-focus';
       if (training.item.good === index && game.board[index] === 0) point.className += ' teaching-target';
@@ -215,14 +229,21 @@ function render() {
     point.style.left = `${14 + col * 18}%`;
     point.style.top = `${14 + row * 18}%`;
     point.setAttribute('aria-label', `${coordinate(index)} ${stone ? `${colorName(stone)}の石` : '空点'}${owner ? `・${colorName(owner)}の地` : ''}`);
-    point.disabled = !draftBoard && (!humanTurn || stone !== 0);
+    point.disabled = game.phase === 'agreement' ? !stone : !draftBoard && (!humanTurn || stone !== 0);
     if (stone) {
       const stoneNode = document.createElement('span');
       stoneNode.className = `stone ${stone === 1 ? 'black' : 'white'}`;
       point.append(stoneNode);
     }
     point.addEventListener('click', () => {
-      if (draftBoard) {
+      if (game.phase === 'agreement' && !draftBoard) {
+        const indices = group(game.board, index).stones;
+        window.__deadMarks ??= new Set();
+        const remove = indices.every((i) => window.__deadMarks.has(i));
+        for (const i of indices) remove ? window.__deadMarks.delete(i) : window.__deadMarks.add(i);
+        render();
+        setAnnouncement('死に石候補を選択中。選択した石群は終局時に取り除かれます。');
+      } else if (draftBoard) {
         const color = Number($('setup-color').value);
         draftBoard[index] = draftBoard[index] === color ? 0 : color;
         render();
@@ -257,7 +278,7 @@ function renderResult(score) {
   if (game.reason === 'passes') {
     kind.textContent = '双方連続パスで終局';
     title.textContent = game.winner === 0 ? '引き分け' : `${colorName(game.winner)}の勝ち`;
-    detail.textContent = `黒：地 ${score.territory.black} 点${game.includeCaptures ? ` + 捕獲 ${score.captures[1]} 子` : ''} = ${score.black} 点。白：地 ${score.territory.white} 点${game.includeCaptures ? ` + 捕獲 ${score.captures[2]} 子` : ''} = ${score.white} 点。`;
+    detail.textContent = `黒：地 ${score.territory.black} 点 + 捕獲 ${score.captures[1]} 子 = ${score.black} 点。白：地 ${score.territory.white} 点 + 捕獲 ${score.captures[2]} 子 + コミ ${score.komi} 目 = ${score.white} 点。`;
   } else {
     kind.textContent = '任意終了';
     title.textContent = '対局を終了しました';
@@ -274,8 +295,8 @@ function recordMove(index) {
   game = result.state;
   const mover = result.state.log.at(-1);
   if (game.over) {
-    const totals = score(game.board, game.captures, game.includeCaptures);
-    setAnnouncement(`双方が続けてパスしました。黒 ${totals.black} 点、白 ${totals.white} 点で終局です。`);
+    const totals = score(game.board, game.captures, game.includeCaptures, game.rules, game.komi);
+    setAnnouncement(game.phase === 'agreement' ? '双方がパスしました。死活を確認して終局するか、対局を再開してください。' : `双方が続けてパスしました。黒 ${totals.black} 点、白 ${totals.white} 点で終局です。`);
   } else if (mover.index === null) {
     setAnnouncement(`${colorName(mover.color)}がパスしました。${game.passes === 1 ? '相手もパスすると終局です。' : '対局を続けます。'}`);
   } else if (mover.captured.length) {
@@ -338,6 +359,7 @@ function beginGame(nextGame, message, keepTraining = false) {
   if (!keepTraining) training = null;
   draftBoard = null;
   game = nextGame;
+  window.__deadMarks = new Set();
   resultNode.hidden = true;
   setAnnouncement(message);
   render();
@@ -356,6 +378,9 @@ $('undo').addEventListener('click', () => {
 $('edit-setup').addEventListener('click', () => {
   if (training) return;
   cancelCpu();
+  $('ruleset').value = game.rules ?? RULES.CUSTOM;
+  $('komi').value = String(game.komi ?? 0);
+  $('setup-captures').checked = game.rules === RULES.JAPANESE || game.includeCaptures;
   draftBoard = game.board.slice();
   setAnnouncement('黒・白・消しゴムを選んで盤をタップ。配置から始めると手の記録をリセットします。');
   render();
@@ -372,10 +397,53 @@ $('cancel-setup').addEventListener('click', () => {
 $('start-setup').addEventListener('click', () => {
   if (!draftBoard) return;
   try {
-    beginGame(setupGame(draftBoard), '置き石から対局開始。あなた（黒）の手番です。');
-  } catch {
-    setAnnouncement('呼吸点が0の石があります。消しゴムで石を取り除くか、隣の交点を空けてください。', true);
+    const rules = $('ruleset').value;
+    const komi = rules === RULES.JAPANESE ? Number($('komi').value) : 0;
+    beginGame(setupGame(draftBoard, rules, komi, $('setup-captures').checked), '置き石から対局開始。あなた（黒）の手番です。');
+  } catch (error) {
+    setAnnouncement(error.message === 'invalid-rules' ? 'コミは0〜25目の範囲で0.5目刻みに設定してください。' : '呼吸点が0の石があります。消しゴムで石を取り除くか、隣の交点を空けてください。', true);
   }
+});
+$('ruleset').addEventListener('change', (event) => {
+  const japanese = event.currentTarget.value === RULES.JAPANESE;
+  $('komi-row').hidden = !japanese;
+  $('komi').hidden = !japanese;
+  if (draftBoard) {
+    $('setup-captures').checked = japanese || $('setup-captures').checked;
+    $('setup-captures').disabled = japanese;
+  }
+});
+$('share-setup').addEventListener('click', async () => {
+  try {
+    const board = draftBoard ?? game.initialBoard ?? game.board;
+    const rules = draftBoard ? $('ruleset').value : game.rules;
+    const komi = rules === RULES.JAPANESE ? Number(draftBoard ? $('komi').value : game.komi) : 0;
+    const includeCaptures = rules === RULES.JAPANESE || Boolean(draftBoard ? $('setup-captures').checked : game.includeCaptures);
+    const link = new URL(location.href);
+    link.hash = encodeSetup(board, rules, komi, includeCaptures);
+    $('setup-url').value = link.href;
+    $('setup-url').hidden = false;
+    await navigator.clipboard.writeText(link.href);
+    setAnnouncement('置き石・ルール・コミを含むURLをコピーしました。開くとこの配置から黒番で始まります。');
+  } catch {
+    $('setup-url').hidden = false;
+    $('setup-url').focus(); $('setup-url').select();
+    setAnnouncement('URLを表示しました。選択してコピーしてください。');
+  }
+});
+$('finish-agreement').addEventListener('click', () => {
+  const settled = finishAgreement(game, [...(window.__deadMarks ?? [])]);
+  if (!settled.ok) return;
+  game = settled.state;
+  setAnnouncement('死活を確認して終局しました。日本式の地・捕獲石・コミで計算します。');
+  render();
+});
+$('resume-game').addEventListener('click', () => {
+  game = resumeAfterAgreement(game);
+  window.__deadMarks = new Set();
+  setAnnouncement('終局確認を取り消し、対局に戻ります。');
+  render();
+  scheduleCpu();
 });
 $('hint').addEventListener('click', () => { showTerritory = !showTerritory; render(); });
 $('include-captures').addEventListener('change', (event) => {
@@ -430,6 +498,17 @@ $('basic-hint').addEventListener('click', () => {
   render();
 });
 
-setAnnouncement('あなたは黒・先手です。空いている交点をタップして初手を打ちましょう。');
+let sharedSetup = decodeSetup(location.hash);
+let invalidSharedSetup = false;
+if (sharedSetup) {
+  try {
+    game = setupGame(sharedSetup.board, sharedSetup.rules, sharedSetup.komi, sharedSetup.includeCaptures);
+  } catch {
+    sharedSetup = null;
+    invalidSharedSetup = true;
+    setAnnouncement('共有URLの盤面は開始できません（呼吸点がない石があります）。', true);
+  }
+}
+if (!invalidSharedSetup) setAnnouncement(sharedSetup ? '共有された置き石・ルール設定を読み込みました。黒番で始めます。' : 'あなたは黒・先手です。空いている交点をタップして初手を打ちましょう。');
 render();
 window.addEventListener('resize', renderScoreChart, { passive: true });
