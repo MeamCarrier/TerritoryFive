@@ -72,6 +72,7 @@ function moveNumberMap() {
     const next = play(replay, move.index);
     if (!next.ok) break;
     replay = next.state;
+    if (replay.over && index < game.log.length - 1) replay = { ...replay, over: false, reason: null, phase: 'play', passes: 0 };
     replay.board.forEach((stone, point) => { if (!stone) numbers[point] = 0; });
     if (move.index !== null) numbers[move.index] = index + 1;
   }
