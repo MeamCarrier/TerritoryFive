@@ -1,5 +1,5 @@
-import { SIZE, SUPPORTED_SIZES, boardSize, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261021-2';
-import { chooseMove } from './cpu.js?v=20261021-2';
+import { SIZE, SUPPORTED_SIZES, boardSize, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261021-3';
+import { chooseMove } from './cpu.js?v=20261021-3';
 
 const $ = (id) => document.getElementById(id);
 const boardNode = $('points');
@@ -22,7 +22,7 @@ let draftBoard = null;
 let draftIncludeCaptures = false;
 function makeCpuWorker() {
   try {
-    return new Worker(new URL('./cpu-worker.js?v=20261021-2', import.meta.url), { type: 'module' });
+    return new Worker(new URL('./cpu-worker.js?v=20261021-3', import.meta.url), { type: 'module' });
   } catch {
     return null;
   }
@@ -135,7 +135,12 @@ function render() {
   const board = draftBoard ?? game.board;
   const size = boardSize(board) || SIZE;
   const area = territory(board);
-  const totals = score(board, game.captures, game.includeCaptures, game.rules, game.komi);
+  const displayedRules = draftBoard ? $('ruleset').value : game.rules;
+  const displayedKomi = draftBoard && [RULES.JAPANESE, RULES.JUNGO].includes(displayedRules) ? Number($('komi').value) : game.komi;
+  const displayedCaptures = draftBoard ? { 1: 0, 2: 0 } : game.captures;
+  const displayedIncludeCaptures = draftBoard ? draftIncludeCaptures : game.includeCaptures;
+  const totals = score(board, displayedCaptures, displayedIncludeCaptures, displayedRules, displayedKomi);
+  const jungo = displayedRules === RULES.JUNGO;
   const humanTurn = isHumanTurn();
   const ended = game.over;
   $('black-who').textContent = game.playerColor === 1 ? 'あなた' : 'CPU';
@@ -145,20 +150,28 @@ function render() {
   $('edition-size').textContent = `${size} × ${size}`;
   $('black-points').innerHTML = `${totals.black}<small>点</small>`;
   $('white-points').innerHTML = `${totals.white}<small>点</small>`;
-  $('black-breakdown').textContent = `地 ${area.black}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[1]}子`;
-  $('white-breakdown').textContent = `地 ${area.white}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[2]}子${game.rules === RULES.JAPANESE ? ` + コミ ${game.komi}` : ''}`;
+  $('black-breakdown').textContent = jungo
+    ? `盤上 ${totals.stones[1]}子・捕獲 ${displayedCaptures[1]}子（得点外）`
+    : `地 ${area.black}${displayedIncludeCaptures ? ' + ' : '・'}捕獲 ${displayedCaptures[1]}子`;
+  $('white-breakdown').textContent = jungo
+    ? `盤上 ${totals.stones[2]}子・捕獲 ${displayedCaptures[2]}子（得点外） + コミ ${displayedKomi}`
+    : `地 ${area.white}${displayedIncludeCaptures ? ' + ' : '・'}捕獲 ${displayedCaptures[2]}子${displayedRules === RULES.JAPANESE ? ` + コミ ${displayedKomi}` : ''}`;
   const setupRules = draftBoard ? $('ruleset').value : game.rules ?? RULES.CUSTOM;
-  $('include-captures').checked = game.rules === RULES.JAPANESE || (draftBoard ? draftIncludeCaptures : game.includeCaptures);
+  const setupUsesJungo = setupRules === RULES.JUNGO;
+  const setupUsesKomi = [RULES.JAPANESE, RULES.JUNGO].includes(setupRules);
+  $('include-captures').checked = setupRules === RULES.JAPANESE || (!setupUsesJungo && (draftBoard ? draftIncludeCaptures : game.includeCaptures));
   const rulesLocked = !draftBoard && (ended || game.phase === 'agreement');
-  $('include-captures').disabled = setupRules === RULES.JAPANESE || rulesLocked;
+  $('include-captures').disabled = setupUsesKomi || rulesLocked;
+  $('capture-scoring-option').hidden = setupUsesJungo;
+  $('capture-scoring-note').hidden = !setupUsesJungo;
   $('ruleset').value = setupRules;
   $('ruleset').disabled = rulesLocked;
   if (!draftBoard) {
     $('komi').value = String(game.komi ?? 0);
   }
-  $('komi').disabled = setupRules !== RULES.JAPANESE || rulesLocked;
-  $('komi-row').hidden = setupRules !== RULES.JAPANESE;
-  $('komi').hidden = setupRules !== RULES.JAPANESE;
+  $('komi').disabled = !setupUsesKomi || rulesLocked;
+  $('komi-row').hidden = !setupUsesKomi;
+  $('komi').hidden = !setupUsesKomi;
   $('share-setup').disabled = false;
   $('agreement-controls').hidden = game.phase !== 'agreement';
   $('pass-count').textContent = `連続パス ${Math.min(game.passes, 2)} / 2`;
@@ -185,7 +198,7 @@ function render() {
     const col = index % size;
     const margin = size === 9 ? 10 : 14;
     const span = 100 - margin * 2;
-    const owner = showTerritory ? area.owners[index] : 0;
+    const owner = showTerritory && displayedRules !== RULES.JUNGO ? area.owners[index] : 0;
     point.type = 'button';
     point.className = `point${owner === 1 ? ' owned-black' : owner === 2 ? ' owned-white' : ''}${!draftBoard && game.lastMove === index ? ' last' : ''}${window.__deadMarks?.has(index) ? ' dead-marked' : ''}`;
     point.style.left = `${margin + col * span / (size - 1)}%`;
@@ -223,6 +236,8 @@ function render() {
 
   $('hint').setAttribute('aria-pressed', String(showTerritory));
   $('hint').innerHTML = `空点の色分け <span>${showTerritory ? 'ON' : 'OFF'}</span>`;
+  $('hint').hidden = displayedRules === RULES.JUNGO;
+  $('board-legend').hidden = displayedRules === RULES.JUNGO;
   $('toggle-move-numbers').setAttribute('aria-pressed', String(showMoveNumbers));
   $('toggle-move-numbers').innerHTML = `手数を石に表示 <span>${showMoveNumbers ? 'ON' : 'OFF'}</span>`;
   $('history-count').textContent = `${game.log.length}手`;
@@ -266,7 +281,9 @@ function renderResult(score) {
   if (game.reason === 'passes') {
     kind.textContent = '双方連続パスで終局';
     title.textContent = game.winner === 0 ? '引き分け' : `${colorName(game.winner)}の勝ち`;
-    detail.textContent = `黒：地 ${score.territory.black} 点 + 捕獲 ${score.captures[1]} 子 = ${score.black} 点。白：地 ${score.territory.white} 点 + 捕獲 ${score.captures[2]} 子 + コミ ${score.komi} 目 = ${score.white} 点。`;
+    detail.textContent = game.rules === RULES.JUNGO
+      ? `黒：盤上 ${score.stones[1]} 子。白：盤上 ${score.stones[2]} 子 + コミ ${score.komi} 目。純碁は盤上に残った石数で勝敗を決めます。`
+      : `黒：地 ${score.territory.black} 点 + 捕獲 ${score.captures[1]} 子 = ${score.black} 点。白：地 ${score.territory.white} 点 + 捕獲 ${score.captures[2]} 子 + コミ ${score.komi} 目 = ${score.white} 点。`;
   } else {
     kind.textContent = '任意終了';
     title.textContent = '対局を終了しました';
@@ -367,7 +384,7 @@ $('edit-setup').addEventListener('click', () => {
   cancelCpu();
   $('ruleset').value = game.rules ?? RULES.CUSTOM;
   $('komi').value = String(game.komi ?? 0);
-  draftIncludeCaptures = game.rules === RULES.JAPANESE || game.includeCaptures;
+  draftIncludeCaptures = game.rules === RULES.JAPANESE || (game.rules !== RULES.JUNGO && game.includeCaptures);
   $('setup-player').value = String(game.playerColor ?? 1);
   $('setup-size').value = String(game.size ?? SIZE);
   draftBoard = game.board.slice();
@@ -395,7 +412,7 @@ $('start-setup').addEventListener('click', () => {
   if (!draftBoard) return;
   try {
     const rules = $('ruleset').value;
-    const komi = rules === RULES.JAPANESE ? Number($('komi').value) : 0;
+    const komi = [RULES.JAPANESE, RULES.JUNGO].includes(rules) ? Number($('komi').value) : 0;
     const playerColor = Number($('setup-player').value);
     beginGame(setupGame(draftBoard, rules, komi, draftIncludeCaptures, playerColor), `置き石から対局開始。あなた（${colorName(playerColor)}）の手番です。`);
     scheduleCpu();
@@ -404,13 +421,16 @@ $('start-setup').addEventListener('click', () => {
   }
 });
 $('ruleset').addEventListener('change', (event) => {
-  const japanese = event.currentTarget.value === RULES.JAPANESE;
-  $('komi-row').hidden = !japanese;
-  $('komi').hidden = !japanese;
+  const selectedRule = event.currentTarget.value;
+  const japanese = selectedRule === RULES.JAPANESE;
+  const jungo = selectedRule === RULES.JUNGO;
+  const usesKomi = japanese || jungo;
+  $('komi-row').hidden = !usesKomi;
+  $('komi').hidden = !usesKomi;
   if (draftBoard) {
-    draftIncludeCaptures = japanese || $('include-captures').checked;
+    draftIncludeCaptures = japanese || (!jungo && $('include-captures').checked);
     $('include-captures').checked = draftIncludeCaptures;
-    $('include-captures').disabled = japanese;
+    $('include-captures').disabled = usesKomi;
     render();
     return;
   }
@@ -419,16 +439,16 @@ $('ruleset').addEventListener('change', (event) => {
   if (wasThinking) cancelCpu();
   game = {
     ...game,
-    rules: japanese ? RULES.JAPANESE : RULES.CUSTOM,
-    komi: japanese ? Number($('komi').value) : 0,
-    includeCaptures: japanese || game.includeCaptures,
+    rules: selectedRule,
+    komi: usesKomi ? Number($('komi').value) : 0,
+    includeCaptures: japanese || (!jungo && game.includeCaptures),
   };
-  setAnnouncement(`対局中のルールを${japanese ? '日本式（簡略対局）' : '五路の余白（独自ルール）'}へ変更しました。${wasThinking ? 'CPUは新しい条件で読み直します。' : ''}`);
+  setAnnouncement(`対局中のルールを${japanese ? '日本式（簡略対局）' : jungo ? '純碁' : '五路の余白（独自ルール）'}へ変更しました。${wasThinking ? 'CPUは新しい条件で読み直します。' : ''}`);
   render();
   scheduleCpu();
 });
 $('komi').addEventListener('change', (event) => {
-  if (draftBoard || game.over || game.phase === 'agreement' || game.rules !== RULES.JAPANESE) return;
+  if (draftBoard || game.over || game.phase === 'agreement' || ![RULES.JAPANESE, RULES.JUNGO].includes(game.rules)) return;
   const wasThinking = cpuThinking;
   if (wasThinking) cancelCpu();
   game = { ...game, komi: Number(event.currentTarget.value) };
@@ -440,8 +460,8 @@ $('share-setup').addEventListener('click', async () => {
   try {
     const board = draftBoard ?? game.initialBoard ?? game.board;
     const rules = draftBoard ? $('ruleset').value : game.rules;
-    const komi = rules === RULES.JAPANESE ? Number(draftBoard ? $('komi').value : game.komi) : 0;
-    const includeCaptures = rules === RULES.JAPANESE || Boolean(draftBoard ? draftIncludeCaptures : game.includeCaptures);
+    const komi = [RULES.JAPANESE, RULES.JUNGO].includes(rules) ? Number(draftBoard ? $('komi').value : game.komi) : 0;
+    const includeCaptures = rules === RULES.JAPANESE || (rules !== RULES.JUNGO && Boolean(draftBoard ? draftIncludeCaptures : game.includeCaptures));
     const playerColor = Number(draftBoard ? $('setup-player').value : game.playerColor ?? 1);
     const nextTurn = draftBoard ? playerColor : (game.initialTurn ?? game.playerColor ?? 1);
     const link = new URL(location.href);
@@ -460,7 +480,7 @@ $('finish-agreement').addEventListener('click', () => {
   const settled = finishAgreement(game, [...(window.__deadMarks ?? [])]);
   if (!settled.ok) return;
   game = settled.state;
-  setAnnouncement('死活を確認して終局しました。日本式の地・捕獲石・コミで計算します。');
+  setAnnouncement(game.rules === RULES.JUNGO ? '双方連続パスで終局しました。盤上に残った石数とコミで計算します。' : '死活を確認して終局しました。日本式の地・捕獲石・コミで計算します。');
   render();
 });
 $('resume-game').addEventListener('click', () => {

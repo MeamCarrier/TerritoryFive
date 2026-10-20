@@ -1,4 +1,4 @@
-import { neighbors, group, tryMove, territory, score } from './engine.js';
+import { neighbors, group, tryMove, territory, score, RULES } from './engine.js';
 
 const PASS = null;
 const MAX_DEPTH = 9;
@@ -8,9 +8,9 @@ const SEARCH_LIMIT = Symbol('search-limit');
 
 function evaluate(board, color, captures, includeCaptures, rules = 'custom', komi = 0) {
   const size = Math.sqrt(board.length);
-  const area = territory(board);
+  const totals = score(board, captures, includeCaptures, rules, komi);
   const sign = color === 1 ? 1 : -1;
-  let value = sign * ((area.black - area.white) + (includeCaptures ? captures[1] - captures[2] : 0) - (rules === 'japanese' ? komi : 0)) * 3.5;
+  let value = sign * (totals.black - totals.white) * 3.5;
   const seen = new Set();
 
   for (let i = 0; i < board.length; i += 1) {
@@ -25,17 +25,19 @@ function evaluate(board, color, captures, includeCaptures, rules = 'custom', kom
     else value += side * Math.min(libertyCount, 5) * 0.12;
   }
 
-  // Empty intersections near safe stones are useful for future territory,
-  // but never count as points until the territory rule actually assigns them.
-  for (let i = 0; i < board.length; i += 1) {
-    if (board[i] !== 0) continue;
-    let own = 0;
-    let enemy = 0;
-    for (const next of neighbors(i, size)) {
-      if (board[next] === color) own += 1;
-      else if (board[next] === 3 - color) enemy += 1;
+  if (rules !== RULES.JUNGO) {
+    // Empty intersections near safe stones are useful for future territory,
+    // but never count until the selected territory rule assigns them.
+    for (let i = 0; i < board.length; i += 1) {
+      if (board[i] !== 0) continue;
+      let own = 0;
+      let enemy = 0;
+      for (const next of neighbors(i, size)) {
+        if (board[next] === color) own += 1;
+        else if (board[next] === 3 - color) enemy += 1;
+      }
+      value += (own - enemy) * 0.16;
     }
-    value += (own - enemy) * 0.16;
   }
   return value;
 }
@@ -50,9 +52,9 @@ function legalMoves(board, color) {
   return moves;
 }
 
-function movePriority(move, color, includeCaptures) {
+function movePriority(move, color, includeCaptures, rules) {
   const size = Math.sqrt(move.board.length);
-  const capture = includeCaptures ? move.captured.length * 12 : 0;
+  const capture = includeCaptures || rules === RULES.JUNGO ? move.captured.length * 12 : 0;
   const liberties = group(move.board, move.index).liberties.length;
   let contact = 0;
   for (const next of neighbors(move.index, size)) {
@@ -61,10 +63,10 @@ function movePriority(move, color, includeCaptures) {
   return capture + Math.min(liberties, 4) * 1.5 + contact * 0.3;
 }
 
-function orderedMoves(board, color, includeCaptures) {
+function orderedMoves(board, color, includeCaptures, rules) {
   const size = Math.sqrt(board.length);
   const moves = legalMoves(board, color)
-    .map((move) => ({ ...move, priority: movePriority(move, color, includeCaptures) }))
+    .map((move) => ({ ...move, priority: movePriority(move, color, includeCaptures, rules) }))
     .sort((a, b) => b.priority - a.priority);
   if (size !== 9) return moves;
 
@@ -99,7 +101,7 @@ function search(board, color, captures, passes, depth, alpha, beta, budget, incl
 
   let best = -Infinity;
   const nextColor = 3 - color;
-  const moves = orderedMoves(board, color, includeCaptures);
+  const moves = orderedMoves(board, color, includeCaptures, rules);
   moves.push({ index: PASS, board, captured: [], priority: -1 });
 
   for (const move of moves) {
@@ -126,7 +128,7 @@ export function chooseMove(state) {
   for (let depth = 1; depth <= MAX_DEPTH; depth += 1) {
     let iterationBest = { index: PASS, board: state.board, captured: [], value: -Infinity };
     let alpha = -Infinity;
-    const moves = orderedMoves(state.board, color, includeCaptures);
+    const moves = orderedMoves(state.board, color, includeCaptures, rules);
     if (previous && previous.index !== PASS) {
       moves.sort((a, b) => (a.index === previous.index ? -1 : b.index === previous.index ? 1 : 0));
     }
@@ -136,7 +138,7 @@ export function chooseMove(state) {
         const nextPasses = move.index === PASS ? state.passes + 1 : 0;
         const nextCaptures = { ...state.captures, [color]: state.captures[color] + move.captured.length };
         const prior = state.log?.at(-1);
-        if (rules === 'japanese' && prior?.index !== null && prior?.captured?.length === 1 && move.index !== PASS && state.history?.length > 1 &&
+        if ([RULES.JAPANESE, RULES.JUNGO].includes(rules) && prior?.index !== null && prior?.captured?.length === 1 && move.index !== PASS && state.history?.length > 1 &&
             move.board.join('') === state.history[state.history.length - 2].split(':')[0]) continue;
         const value = -search(move.board, 3 - color, nextCaptures, nextPasses, depth - 1, -Infinity, -alpha, budget, includeCaptures, rules, komi);
         if (value > iterationBest.value) {

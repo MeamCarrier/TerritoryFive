@@ -1,6 +1,6 @@
 export const SIZE = 5;
 export const SUPPORTED_SIZES = Object.freeze([5, 9]);
-export const RULES = Object.freeze({ CUSTOM: 'custom', JAPANESE: 'japanese' });
+export const RULES = Object.freeze({ CUSTOM: 'custom', JAPANESE: 'japanese', JUNGO: 'jungo' });
 
 export function boardSize(board) {
   if (!Array.isArray(board)) return 0;
@@ -16,7 +16,8 @@ export function encodeSetup(board, rules = RULES.CUSTOM, komi = 0, includeCaptur
   if (nextTurn !== 1 && nextTurn !== 2) throw new TypeError('invalid-turn');
   if (!Number.isFinite(komi) || komi < 0 || komi > 7.5 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-komi');
   const cells = board.map((point) => point === 1 ? 'B' : point === 2 ? 'W' : '.').join('');
-  return `#tf=1&size=${boardSize(board)}&board=${cells}&rules=${rules}&komi=${komi}&captures=${rules === RULES.JAPANESE ? 1 : Number(Boolean(includeCaptures))}&player=${playerColor}&turn=${nextTurn}`;
+  const captures = rules === RULES.JAPANESE ? 1 : rules === RULES.JUNGO ? 0 : Number(Boolean(includeCaptures));
+  return `#tf=1&size=${boardSize(board)}&board=${cells}&rules=${rules}&komi=${komi}&captures=${captures}&player=${playerColor}&turn=${nextTurn}`;
 }
 
 export function decodeSetup(hash) {
@@ -34,7 +35,7 @@ export function decodeSetup(hash) {
     if (!cells || !SUPPORTED_SIZES.includes(size) || cells.length !== size * size || !new RegExp(`^[.BW]{${size * size}}$`).test(cells) ||
         !Object.values(RULES).includes(rules) ||
         !/^(?:0|[1-7])(?:\.5)?$/.test(komiText) || komi > 7.5 || !['0', '1'].includes(capturesText) || !['1', '2'].includes(playerText) || !['1', '2'].includes(turnText)) return null;
-    return { board: [...cells].map((cell) => cell === 'B' ? 1 : cell === 'W' ? 2 : 0), size, rules, komi, includeCaptures: rules === RULES.JAPANESE || capturesText === '1', playerColor: Number(playerText), turn: Number(turnText) };
+    return { board: [...cells].map((cell) => cell === 'B' ? 1 : cell === 'W' ? 2 : 0), size, rules, komi, includeCaptures: rules === RULES.JAPANESE || (rules !== RULES.JUNGO && capturesText === '1'), playerColor: Number(playerText), turn: Number(turnText) };
   } catch { return null; }
 }
 
@@ -167,6 +168,20 @@ export function territory(board) {
 export function score(board, captures = {}, includeCaptures = true, rules = RULES.CUSTOM, komi = 0) {
   const area = territory(board);
   const captured = { 1: captures[1] ?? 0, 2: captures[2] ?? 0 };
+  if (rules === RULES.JUNGO) {
+    const stones = { 1: board.filter((point) => point === 1).length, 2: board.filter((point) => point === 2).length };
+    return {
+      ...area,
+      territory: { black: area.black, white: area.white },
+      captures: captured,
+      stones,
+      black: stones[1],
+      white: stones[2] + komi,
+      includeCaptures: false,
+      rules,
+      komi,
+    };
+  }
   const countCaptures = rules === RULES.JAPANESE || includeCaptures;
   return {
     ...area,
@@ -242,7 +257,7 @@ export function play(state, indexOrNull) {
   const move = tryMove(state.board, color, indexOrNull);
   if (!move.ok) return { ok: false, state, captured: [], error: move.error };
   const previousMove = state.log?.at(-1);
-  if (state.rules === RULES.JAPANESE && previousMove?.index !== null && previousMove?.captured?.length === 1 && state.history?.length > 1 &&
+  if ([RULES.JAPANESE, RULES.JUNGO].includes(state.rules) && previousMove?.index !== null && previousMove?.captured?.length === 1 && state.history?.length > 1 &&
       positionKey(move.board, nextTurn) === state.history[state.history.length - 2]) {
     return { ok: false, state, captured: [], error: 'ko' };
   }
@@ -312,7 +327,7 @@ export function setupGame(board, rules = RULES.CUSTOM, komi = 0, includeCaptures
       throw new Error('no-liberties');
     }
   }
-  return { ...newGame(boardSize(board)), board: board.slice(), initialBoard: board.slice(), turn: nextTurn, initialTurn: nextTurn, playerColor, rules, komi: rules === RULES.JAPANESE ? komi : 0, includeCaptures: rules === RULES.JAPANESE || Boolean(includeCaptures), history: [positionKey(board, nextTurn)] };
+  return { ...newGame(boardSize(board)), board: board.slice(), initialBoard: board.slice(), turn: nextTurn, initialTurn: nextTurn, playerColor, rules, komi: [RULES.JAPANESE, RULES.JUNGO].includes(rules) ? komi : 0, includeCaptures: rules === RULES.JAPANESE || (rules !== RULES.JUNGO && Boolean(includeCaptures)), history: [positionKey(board, nextTurn)] };
 }
 
 // Return to just before the latest human move, including any CPU reply.
