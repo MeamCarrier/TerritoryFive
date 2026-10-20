@@ -1,4 +1,4 @@
-import { SIZE, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261020-3';
+import { SIZE, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261020-4';
 import { chooseMove } from './cpu.js?v=20261020-2';
 
 const $ = (id) => document.getElementById(id);
@@ -335,7 +335,7 @@ $('start-setup').addEventListener('click', () => {
     const rules = $('ruleset').value;
     const komi = rules === RULES.JAPANESE ? Number($('komi').value) : 0;
     const playerColor = Number($('setup-player').value);
-    beginGame(setupGame(draftBoard, rules, komi, draftIncludeCaptures, playerColor), `置き石から対局開始。${playerColor === 1 ? 'あなた（黒）から始めます。' : 'CPU（黒）が先に打ちます。'}`);
+    beginGame(setupGame(draftBoard, rules, komi, draftIncludeCaptures, playerColor), `置き石から対局開始。あなた（${colorName(playerColor)}）の手番です。`);
     scheduleCpu();
   } catch (error) {
     setAnnouncement(error.message === 'invalid-rules' ? 'コミは0〜7.5目のリストから選んでください。' : '呼吸点が0の石があります。消しゴムで石を取り除くか、隣の交点を空けてください。', true);
@@ -381,8 +381,9 @@ $('share-setup').addEventListener('click', async () => {
     const komi = rules === RULES.JAPANESE ? Number(draftBoard ? $('komi').value : game.komi) : 0;
     const includeCaptures = rules === RULES.JAPANESE || Boolean(draftBoard ? draftIncludeCaptures : game.includeCaptures);
     const playerColor = Number(draftBoard ? $('setup-player').value : game.playerColor ?? 1);
+    const nextTurn = draftBoard ? playerColor : (game.initialTurn ?? game.playerColor ?? 1);
     const link = new URL(location.href);
-    link.hash = encodeSetup(board, rules, komi, includeCaptures, playerColor);
+    link.hash = encodeSetup(board, rules, komi, includeCaptures, playerColor, nextTurn);
     $('setup-url').value = link.href;
     $('setup-url').hidden = false;
     await navigator.clipboard.writeText(link.href);
@@ -435,7 +436,7 @@ let sharedSetup = decodeSetup(location.hash);
 let invalidSharedSetup = false;
 if (sharedSetup) {
   try {
-    game = setupGame(sharedSetup.board, sharedSetup.rules, sharedSetup.komi, sharedSetup.includeCaptures, sharedSetup.playerColor);
+    game = setupGame(sharedSetup.board, sharedSetup.rules, sharedSetup.komi, sharedSetup.includeCaptures, sharedSetup.playerColor, sharedSetup.turn);
   } catch {
     sharedSetup = null;
     invalidSharedSetup = true;
