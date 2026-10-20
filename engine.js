@@ -4,11 +4,12 @@ export const RULES = Object.freeze({ CUSTOM: 'custom', JAPANESE: 'japanese' });
 
 // Share only the starting board and rule settings; the fragment stays local to
 // the browser and is not sent to the hosting server.
-export function encodeSetup(board, rules = RULES.CUSTOM, komi = 0, includeCaptures = false) {
+export function encodeSetup(board, rules = RULES.CUSTOM, komi = 0, includeCaptures = false, playerColor = 1) {
   if (!validBoard(board) || !Object.values(RULES).includes(rules)) throw new TypeError('invalid-setup');
+  if (playerColor !== 1 && playerColor !== 2) throw new TypeError('invalid-player-color');
   if (!Number.isFinite(komi) || komi < 0 || komi > 7.5 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-komi');
   const cells = board.map((point) => point === 1 ? 'B' : point === 2 ? 'W' : '.').join('');
-  return `#tf=1&board=${cells}&rules=${rules}&komi=${komi}&captures=${rules === RULES.JAPANESE ? 1 : Number(Boolean(includeCaptures))}`;
+  return `#tf=1&board=${cells}&rules=${rules}&komi=${komi}&captures=${rules === RULES.JAPANESE ? 1 : Number(Boolean(includeCaptures))}&player=${playerColor}`;
 }
 
 export function decodeSetup(hash) {
@@ -19,11 +20,12 @@ export function decodeSetup(hash) {
     const rules = params.get('rules');
     const komiText = params.get('komi') ?? '0';
     const capturesText = params.get('captures') ?? '0';
+    const playerText = params.get('player') ?? '1';
     const komi = Number(komiText);
     if (!cells || cells.length !== POINTS || !/^[.BW]{25}$/.test(cells) ||
         !Object.values(RULES).includes(rules) ||
-        !/^(?:0|[1-7])(?:\.5)?$/.test(komiText) || komi > 7.5 || !['0', '1'].includes(capturesText)) return null;
-    return { board: [...cells].map((cell) => cell === 'B' ? 1 : cell === 'W' ? 2 : 0), rules, komi, includeCaptures: rules === RULES.JAPANESE || capturesText === '1' };
+        !/^(?:0|[1-7])(?:\.5)?$/.test(komiText) || komi > 7.5 || !['0', '1'].includes(capturesText) || !['1', '2'].includes(playerText)) return null;
+    return { board: [...cells].map((cell) => cell === 'B' ? 1 : cell === 'W' ? 2 : 0), rules, komi, includeCaptures: rules === RULES.JAPANESE || capturesText === '1', playerColor: Number(playerText) };
   } catch { return null; }
 }
 
@@ -184,6 +186,8 @@ export function newGame() {
     board,
     initialBoard: board.slice(),
     turn: 1,
+    initialTurn: 1,
+    playerColor: 1,
     passes: 0,
     over: false,
     reason: '',
@@ -283,23 +287,25 @@ export function resumeAfterAgreement(state) {
   return { ...state, phase: 'play', passes: 0 };
 }
 
-export function setupGame(board, rules = RULES.CUSTOM, komi = 0, includeCaptures = false) {
+export function setupGame(board, rules = RULES.CUSTOM, komi = 0, includeCaptures = false, playerColor = 1) {
   if (!validBoard(board)) throw new TypeError('invalid-board');
+  if (playerColor !== 1 && playerColor !== 2) throw new TypeError('invalid-player-color');
   if (!Object.values(RULES).includes(rules) || !Number.isFinite(komi) || komi < 0 || komi > 7.5 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-rules');
   for (let index = 0; index < POINTS; index += 1) {
     if (board[index] && group(board, index).liberties.length === 0) {
       throw new Error('no-liberties');
     }
   }
-  return { ...newGame(), board: board.slice(), initialBoard: board.slice(), rules, komi: rules === RULES.JAPANESE ? komi : 0, includeCaptures: rules === RULES.JAPANESE || Boolean(includeCaptures), history: [positionKey(board, 1)] };
+  return { ...newGame(), board: board.slice(), initialBoard: board.slice(), playerColor, rules, komi: rules === RULES.JAPANESE ? komi : 0, includeCaptures: rules === RULES.JAPANESE || Boolean(includeCaptures), history: [positionKey(board, 1)] };
 }
 
 // Return to just before the latest human move, including any CPU reply.
 // Replay also restores captures, pass streak, last move, score and ko history.
 export function undoHumanTurn(state) {
-  const lastHuman = state.log.findLastIndex((move) => move.color === 1);
+  const playerColor = state.playerColor ?? 1;
+  const lastHuman = state.log.findLastIndex((move) => move.color === playerColor);
   if (lastHuman < 0) return null;
-  let restored = setupGame(state.initialBoard ?? Array(POINTS).fill(0), state.rules ?? RULES.CUSTOM, state.komi ?? 0, state.includeCaptures);
+  let restored = setupGame(state.initialBoard ?? Array(POINTS).fill(0), state.rules ?? RULES.CUSTOM, state.komi ?? 0, state.includeCaptures, playerColor);
   for (const move of state.log.slice(0, lastHuman)) {
     const result = play(restored, move.index);
     if (!result.ok) throw new Error('invalid-history');

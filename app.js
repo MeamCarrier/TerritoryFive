@@ -1,4 +1,4 @@
-import { SIZE, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261020-2';
+import { SIZE, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261020-3';
 import { chooseMove } from './cpu.js?v=20261020-2';
 
 const $ = (id) => document.getElementById(id);
@@ -39,7 +39,7 @@ function colorName(color) { return color === 1 ? '黒' : '白'; }
 function coordinate(index) {
   return `${String.fromCharCode(65 + index % SIZE)}${Math.floor(index / SIZE) + 1}`;
 }
-function isHumanTurn() { return !draftBoard && !game.over && game.turn === 1 && !cpuThinking; }
+function isHumanTurn() { return !draftBoard && !game.over && game.turn === (game.playerColor ?? 1) && !cpuThinking; }
 
 function setAnnouncement(message, error = false) {
   announcement.textContent = message;
@@ -49,7 +49,7 @@ function setAnnouncement(message, error = false) {
 function scoreTrend() {
   // Replay legality under the permissive rule so changing rule mode mid-game
   // does not truncate earlier moves that are no longer legal under simple ko.
-  let replay = setupGame(game.initialBoard ?? Array(SIZE * SIZE).fill(0), RULES.CUSTOM, 0);
+  let replay = setupGame(game.initialBoard ?? Array(SIZE * SIZE).fill(0), RULES.CUSTOM, 0, false, game.initialTurn ?? 1);
   const points = [{ ...score(replay.board, replay.captures, game.includeCaptures, game.rules, game.komi), move: 0 }];
   for (const [index, move] of game.log.entries()) {
     const next = play(replay, move.index);
@@ -118,9 +118,9 @@ function render() {
   const totals = score(board, game.captures, game.includeCaptures, game.rules, game.komi);
   const humanTurn = isHumanTurn();
   const ended = game.over;
-  $('black-who').textContent = 'あなた';
-  $('white-who').textContent = 'CPU';
-  phaseNode.textContent = draftBoard ? '置き石の配置中' : game.phase === 'agreement' ? '死活確認・終局前' : ended ? '対局終了' : cpuThinking ? 'CPUが読みを進めています…' : humanTurn ? 'あなた（黒）の手番' : 'CPU（白）の手番';
+  $('black-who').textContent = game.playerColor === 1 ? 'あなた' : 'CPU';
+  $('white-who').textContent = game.playerColor === 2 ? 'あなた' : 'CPU';
+  phaseNode.textContent = draftBoard ? '置き石の配置中' : game.phase === 'agreement' ? '死活確認・終局前' : ended ? '対局終了' : cpuThinking ? 'CPUが読みを進めています…' : `${humanTurn ? 'あなた' : 'CPU'}（${colorName(game.turn)}）の手番`;
   $('move-no').textContent = `第 ${game.moveNumber + 1} 手`;
   $('black-points').innerHTML = `${totals.black}<small>点</small>`;
   $('white-points').innerHTML = `${totals.white}<small>点</small>`;
@@ -143,8 +143,9 @@ function render() {
   $('pass-count').textContent = `連続パス ${Math.min(game.passes, 2)} / 2`;
   $('pass').disabled = !humanTurn || game.phase === 'agreement';
   $('stop-game').disabled = ended || Boolean(draftBoard);
-  $('undo').disabled = Boolean(draftBoard) || !game.log.some((move) => move.color === 1);
+  $('undo').disabled = Boolean(draftBoard) || !game.log.some((move) => move.color === (game.playerColor ?? 1));
   $('setup-controls').hidden = !draftBoard;
+  $('setup-player').value = String(draftBoard ? ($('setup-player').value || game.playerColor || 1) : (game.playerColor ?? 1));
   $('edit-setup').disabled = Boolean(draftBoard) || game.phase === 'agreement';
   $('black-score').classList.toggle('active-player', !draftBoard && game.phase === 'play' && !ended && game.turn === 1);
   $('white-score').classList.toggle('active-player', !draftBoard && game.phase === 'play' && !ended && game.turn === 2);
@@ -191,7 +192,7 @@ function render() {
   history.replaceChildren();
   game.log.forEach((move, index) => {
     const item = document.createElement('li');
-    const player = move.color === 1 ? 'あなた（黒）' : 'CPU（白）';
+    const player = move.color === game.playerColor ? `あなた（${colorName(move.color)}）` : `CPU（${colorName(move.color)}）`;
     const action = move.index === null ? 'パス' : coordinate(move.index);
     item.textContent = `${index + 1}. ${player}：${action}${move.captured.length ? `、${move.captured.length}子を捕獲` : ''}`;
     history.append(item);
@@ -248,13 +249,13 @@ function humanMove(index) {
 }
 
 function scheduleCpu() {
-  if (draftBoard || game.over || game.turn !== 2 || cpuThinking) return;
+  if (draftBoard || game.over || game.turn === (game.playerColor ?? 1) || cpuThinking) return;
   cpuThinking = true;
   const token = generation;
   setAnnouncement('CPUが数手先を読んでいます。');
   render();
   const finish = (choice) => {
-    if (token !== generation || game.over || game.turn !== 2) return;
+    if (token !== generation || game.over || game.turn === (game.playerColor ?? 1)) return;
     cpuThinking = false;
     recordMove(choice.index);
     if (!game.over) setAnnouncement(`CPU：${choice.reason}`);
@@ -274,7 +275,7 @@ function scheduleCpu() {
     cpuWorker.postMessage({ token, state: game });
   } else {
     window.setTimeout(() => {
-      if (token === generation && !draftBoard && !game.over && game.turn === 2) finish(chooseMove(game));
+      if (token === generation && !draftBoard && !game.over && game.turn !== (game.playerColor ?? 1)) finish(chooseMove(game));
     }, 40);
   }
 }
@@ -314,6 +315,7 @@ $('edit-setup').addEventListener('click', () => {
   $('ruleset').value = game.rules ?? RULES.CUSTOM;
   $('komi').value = String(game.komi ?? 0);
   draftIncludeCaptures = game.rules === RULES.JAPANESE || game.includeCaptures;
+  $('setup-player').value = String(game.playerColor ?? 1);
   draftBoard = game.board.slice();
   setAnnouncement('黒・白・消しゴムを選んで盤をタップ。配置から始めると手の記録をリセットします。');
   render();
@@ -332,7 +334,9 @@ $('start-setup').addEventListener('click', () => {
   try {
     const rules = $('ruleset').value;
     const komi = rules === RULES.JAPANESE ? Number($('komi').value) : 0;
-    beginGame(setupGame(draftBoard, rules, komi, draftIncludeCaptures), '置き石から対局開始。あなた（黒）の手番です。');
+    const playerColor = Number($('setup-player').value);
+    beginGame(setupGame(draftBoard, rules, komi, draftIncludeCaptures, playerColor), `置き石から対局開始。${playerColor === 1 ? 'あなた（黒）から始めます。' : 'CPU（黒）が先に打ちます。'}`);
+    scheduleCpu();
   } catch (error) {
     setAnnouncement(error.message === 'invalid-rules' ? 'コミは0〜7.5目のリストから選んでください。' : '呼吸点が0の石があります。消しゴムで石を取り除くか、隣の交点を空けてください。', true);
   }
@@ -376,12 +380,13 @@ $('share-setup').addEventListener('click', async () => {
     const rules = draftBoard ? $('ruleset').value : game.rules;
     const komi = rules === RULES.JAPANESE ? Number(draftBoard ? $('komi').value : game.komi) : 0;
     const includeCaptures = rules === RULES.JAPANESE || Boolean(draftBoard ? draftIncludeCaptures : game.includeCaptures);
+    const playerColor = Number(draftBoard ? $('setup-player').value : game.playerColor ?? 1);
     const link = new URL(location.href);
-    link.hash = encodeSetup(board, rules, komi, includeCaptures);
+    link.hash = encodeSetup(board, rules, komi, includeCaptures, playerColor);
     $('setup-url').value = link.href;
     $('setup-url').hidden = false;
     await navigator.clipboard.writeText(link.href);
-    setAnnouncement('置き石・ルール・コミを含むURLをコピーしました。開くとこの配置から黒番で始まります。');
+    setAnnouncement(`置き石・あなたの色（${colorName(playerColor)}）・ルール・コミを含むURLをコピーしました。`);
   } catch {
     $('setup-url').hidden = false;
     $('setup-url').focus(); $('setup-url').select();
@@ -430,13 +435,14 @@ let sharedSetup = decodeSetup(location.hash);
 let invalidSharedSetup = false;
 if (sharedSetup) {
   try {
-    game = setupGame(sharedSetup.board, sharedSetup.rules, sharedSetup.komi, sharedSetup.includeCaptures);
+    game = setupGame(sharedSetup.board, sharedSetup.rules, sharedSetup.komi, sharedSetup.includeCaptures, sharedSetup.playerColor);
   } catch {
     sharedSetup = null;
     invalidSharedSetup = true;
     setAnnouncement('共有URLの盤面は開始できません（呼吸点がない石があります）。', true);
   }
 }
-if (!invalidSharedSetup) setAnnouncement(sharedSetup ? '共有された置き石・ルール設定を読み込みました。黒番で始めます。' : 'あなたは黒・先手です。空いている交点をタップして初手を打ちましょう。');
+if (!invalidSharedSetup) setAnnouncement(sharedSetup ? `共有された置き石・ルール設定を読み込みました。あなたは${colorName(game.playerColor)}です。` : 'あなたは黒・先手です。空いている交点をタップして初手を打ちましょう。');
 render();
+scheduleCpu();
 window.addEventListener('resize', renderScoreChart, { passive: true });
