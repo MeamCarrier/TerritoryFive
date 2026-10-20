@@ -1,5 +1,5 @@
-import { SIZE, SUPPORTED_SIZES, boardSize, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261021-1';
-import { chooseMove } from './cpu.js?v=20261021-1';
+import { SIZE, SUPPORTED_SIZES, boardSize, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261021-2';
+import { chooseMove } from './cpu.js?v=20261021-2';
 
 const $ = (id) => document.getElementById(id);
 const boardNode = $('points');
@@ -15,13 +15,14 @@ const MOVE_ERRORS = {
 
 let game = newGame();
 let showTerritory = true;
+let showMoveNumbers = false;
 let cpuThinking = false;
 let generation = 0;
 let draftBoard = null;
 let draftIncludeCaptures = false;
 function makeCpuWorker() {
   try {
-    return new Worker(new URL('./cpu-worker.js?v=20261021-1', import.meta.url), { type: 'module' });
+    return new Worker(new URL('./cpu-worker.js?v=20261021-2', import.meta.url), { type: 'module' });
   } catch {
     return null;
   }
@@ -61,6 +62,20 @@ function scoreTrend() {
     points.push({ ...score(replay.board, replay.captures, game.includeCaptures, game.rules, game.komi), move: index + 1 });
   }
   return points.slice(-7);
+}
+
+function moveNumberMap() {
+  const initial = game.initialBoard ?? Array((game.size ?? SIZE) ** 2).fill(0);
+  let replay = setupGame(initial, RULES.CUSTOM, 0, false, game.playerColor ?? 1, game.initialTurn ?? 1);
+  const numbers = Array(initial.length).fill(0);
+  for (const [index, move] of game.log.entries()) {
+    const next = play(replay, move.index);
+    if (!next.ok) break;
+    replay = next.state;
+    replay.board.forEach((stone, point) => { if (!stone) numbers[point] = 0; });
+    if (move.index !== null) numbers[move.index] = index + 1;
+  }
+  return numbers;
 }
 
 function renderScoreChart() {
@@ -162,6 +177,7 @@ function render() {
   boardNode.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
   boardNode.style.gridTemplateRows = `repeat(${size}, 1fr)`;
   renderBoardGrid(size);
+  const moveNumbers = showMoveNumbers && !draftBoard ? moveNumberMap() : null;
   board.forEach((stone, index) => {
     const point = document.createElement('button');
     const row = Math.floor(index / size);
@@ -173,11 +189,18 @@ function render() {
     point.className = `point${owner === 1 ? ' owned-black' : owner === 2 ? ' owned-white' : ''}${!draftBoard && game.lastMove === index ? ' last' : ''}${window.__deadMarks?.has(index) ? ' dead-marked' : ''}`;
     point.style.left = `${margin + col * span / (size - 1)}%`;
     point.style.top = `${margin + row * span / (size - 1)}%`;
-    point.setAttribute('aria-label', `${coordinate(index)} ${stone ? `${colorName(stone)}の石` : '空点'}${owner ? `・${colorName(owner)}の地` : ''}`);
+    const moveNumber = stone && moveNumbers?.[index] ? moveNumbers[index] : null;
+    point.setAttribute('aria-label', `${coordinate(index)} ${stone ? `${colorName(stone)}の石${moveNumber ? `・${moveNumber}手目` : ''}` : '空点'}${owner ? `・${colorName(owner)}の地` : ''}`);
     point.disabled = game.phase === 'agreement' ? !stone : !draftBoard && (!humanTurn || stone !== 0);
     if (stone) {
       const stoneNode = document.createElement('span');
       stoneNode.className = `stone ${stone === 1 ? 'black' : 'white'}`;
+      if (moveNumber) {
+        const numberNode = document.createElement('span');
+        numberNode.className = 'move-number';
+        numberNode.textContent = String(moveNumber);
+        stoneNode.append(numberNode);
+      }
       point.append(stoneNode);
     }
     point.addEventListener('click', () => {
@@ -199,6 +222,8 @@ function render() {
 
   $('hint').setAttribute('aria-pressed', String(showTerritory));
   $('hint').innerHTML = `空点の色分け <span>${showTerritory ? 'ON' : 'OFF'}</span>`;
+  $('toggle-move-numbers').setAttribute('aria-pressed', String(showMoveNumbers));
+  $('toggle-move-numbers').innerHTML = `手数を石に表示 <span>${showMoveNumbers ? 'ON' : 'OFF'}</span>`;
   $('history-count').textContent = `${game.log.length}手`;
   renderScoreChart();
   const history = $('history');
@@ -445,6 +470,7 @@ $('resume-game').addEventListener('click', () => {
   scheduleCpu();
 });
 $('hint').addEventListener('click', () => { showTerritory = !showTerritory; render(); });
+$('toggle-move-numbers').addEventListener('click', () => { showMoveNumbers = !showMoveNumbers; render(); });
 $('include-captures').addEventListener('change', (event) => {
   if (draftBoard) {
     draftIncludeCaptures = event.currentTarget.checked;

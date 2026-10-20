@@ -21,6 +21,7 @@
 <div class="legend"><span><i class="territory-key black-key"></i>黒の空点</span><span><i class="territory-key white-key"></i>白の空点</span><span>印なし＝中立</span></div>
 <div id="announcement" class="announcement" role="status" aria-live="polite">空いている交点をタップして、黒石を置きましょう。</div>
 <div class="primary-actions"><button id="pass" class="primary" type="button">パスする <span>→</span></button><button id="hint" class="secondary" type="button" aria-pressed="true">空点の色分け <span>ON</span></button></div>
+<button id="toggle-move-numbers" class="secondary move-number-toggle" type="button" aria-pressed="false">手数を石に表示 <span>OFF</span></button>
 <div class="meta-actions"><span id="pass-count">連続パス 0 / 2</span><button id="undo" type="button" disabled>手を戻す</button><button id="stop-game" type="button">対局を終了</button></div>
 <section id="result" class="result" hidden aria-labelledby="result-title"><p class="eyebrow" id="result-kind">双方連続パスで終局</p><h2 id="result-title">結果</h2><p id="result-detail"></p><button id="again" class="primary" type="button">もう一局、余白をつくる</button></section>
 </section>
@@ -33,5 +34,5 @@
 <footer>五路の余白 <span>囲う。空ける。ときには、待つ。</span><small>外部API・広告・トラッキングなし。対局は保存されません。</small></footer>
 </main>
 <dialog id="confirm-dialog"><p class="eyebrow">新しい盤へ</p><h2 id="dialog-title">今の対局を終えて始めますか？</h2><p>現在の対局は置き換わります。</p><div><button id="cancel-dialog" class="secondary">続ける</button><button id="confirm-dialog-button" class="primary">始める</button></div></dialog>
-<script type="module" src="app.js?v=20261021-1"></script>
+<script type="module" src="app.js?v=20261021-2"></script>
 </body></html>
