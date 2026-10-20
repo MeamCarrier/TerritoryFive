@@ -14,3 +14,4 @@ main{padding-top:18px}@media(max-width:760px){main{padding-top:14px}}.chart-head
 .score-player>div{min-width:0}.score-detail{white-space:normal;overflow-wrap:anywhere}.score-player b{flex-shrink:0}
 @media(max-width:480px){.score-divider{padding:0 5px}.score-player{gap:6px}}
 .board.nine .point{width:12%;height:12%}
+.share-spec-link{margin-top:-5px;font-size:10px;text-align:center}.share-spec-link a{color:var(--green);text-underline-offset:3px}
