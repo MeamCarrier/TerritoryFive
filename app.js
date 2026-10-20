@@ -271,6 +271,10 @@ function render() {
   renderTraining();
 }
 
+$('score-chart-panel').addEventListener('toggle', () => {
+  if ($('score-chart-panel').open) renderScoreChart();
+});
+
 function renderResult(score) {
   const kind = $('result-kind');
   const title = $('result-title');
