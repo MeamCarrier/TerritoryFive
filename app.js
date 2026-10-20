@@ -1,5 +1,5 @@
-import { SIZE, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261020-4';
-import { chooseMove } from './cpu.js?v=20261020-2';
+import { SIZE, SUPPORTED_SIZES, boardSize, RULES, encodeSetup, decodeSetup, newGame, play, territory, score, stopGame, setupGame, group, finishAgreement, resumeAfterAgreement, undoHumanTurn } from './engine.js?v=20261021-1';
+import { chooseMove } from './cpu.js?v=20261021-1';
 
 const $ = (id) => document.getElementById(id);
 const boardNode = $('points');
@@ -21,7 +21,7 @@ let draftBoard = null;
 let draftIncludeCaptures = false;
 function makeCpuWorker() {
   try {
-    return new Worker(new URL('./cpu-worker.js?v=20261020-2', import.meta.url), { type: 'module' });
+    return new Worker(new URL('./cpu-worker.js?v=20261021-1', import.meta.url), { type: 'module' });
   } catch {
     return null;
   }
@@ -36,9 +36,11 @@ function cancelCpu() {
 }
 
 function colorName(color) { return color === 1 ? '黒' : '白'; }
+const verticalNumerals = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 function coordinate(index) {
-  const vertical = ['一', '二', '三', '四', '五'][Math.floor(index / SIZE)];
-  return `${index % SIZE + 1}${vertical}`;
+  const size = boardSize(draftBoard ?? game.board) || SIZE;
+  const vertical = verticalNumerals[Math.floor(index / size)];
+  return `${index % size + 1}${vertical}`;
 }
 function isHumanTurn() { return !draftBoard && !game.over && game.turn === (game.playerColor ?? 1) && !cpuThinking; }
 
@@ -50,7 +52,7 @@ function setAnnouncement(message, error = false) {
 function scoreTrend() {
   // Replay legality under the permissive rule so changing rule mode mid-game
   // does not truncate earlier moves that are no longer legal under simple ko.
-  let replay = setupGame(game.initialBoard ?? Array(SIZE * SIZE).fill(0), RULES.CUSTOM, 0, false, game.initialTurn ?? 1);
+  let replay = setupGame(game.initialBoard ?? Array((game.size ?? SIZE) ** 2).fill(0), RULES.CUSTOM, 0, false, game.initialTurn ?? 1);
   const points = [{ ...score(replay.board, replay.captures, game.includeCaptures, game.rules, game.komi), move: 0 }];
   for (const [index, move] of game.log.entries()) {
     const next = play(replay, move.index);
@@ -115,6 +117,7 @@ function renderScoreChart() {
 
 function render() {
   const board = draftBoard ?? game.board;
+  const size = boardSize(board) || SIZE;
   const area = territory(board);
   const totals = score(board, game.captures, game.includeCaptures, game.rules, game.komi);
   const humanTurn = isHumanTurn();
@@ -123,6 +126,7 @@ function render() {
   $('white-who').textContent = game.playerColor === 2 ? 'あなた' : 'CPU';
   phaseNode.textContent = draftBoard ? '置き石の配置中' : game.phase === 'agreement' ? '死活確認・終局前' : ended ? '対局終了' : cpuThinking ? 'CPUが読みを進めています…' : `${humanTurn ? 'あなた' : 'CPU'}（${colorName(game.turn)}）の手番`;
   $('move-no').textContent = `第 ${game.moveNumber + 1} 手`;
+  $('edition-size').textContent = `${size} × ${size}`;
   $('black-points').innerHTML = `${totals.black}<small>点</small>`;
   $('white-points').innerHTML = `${totals.white}<small>点</small>`;
   $('black-breakdown').textContent = `地 ${area.black}${game.includeCaptures ? ' + ' : '・'}捕獲 ${game.captures[1]}子`;
@@ -146,21 +150,29 @@ function render() {
   $('stop-game').disabled = ended || Boolean(draftBoard);
   $('undo').disabled = Boolean(draftBoard) || !game.log.some((move) => move.color === (game.playerColor ?? 1));
   $('setup-controls').hidden = !draftBoard;
+  $('setup-size').value = String(size);
   $('setup-player').value = String(draftBoard ? ($('setup-player').value || game.playerColor || 1) : (game.playerColor ?? 1));
   $('edit-setup').disabled = Boolean(draftBoard) || game.phase === 'agreement';
   $('black-score').classList.toggle('active-player', !draftBoard && game.phase === 'play' && !ended && game.turn === 1);
   $('white-score').classList.toggle('active-player', !draftBoard && game.phase === 'play' && !ended && game.turn === 2);
 
   boardNode.replaceChildren();
+  $('board').classList.toggle('nine', size === 9);
+  $('board').setAttribute('aria-label', `${size}路盤、横1から${size}・縦一から${verticalNumerals[size - 1]}`);
+  boardNode.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
+  boardNode.style.gridTemplateRows = `repeat(${size}, 1fr)`;
+  renderBoardGrid(size);
   board.forEach((stone, index) => {
     const point = document.createElement('button');
-    const row = Math.floor(index / SIZE);
-    const col = index % SIZE;
+    const row = Math.floor(index / size);
+    const col = index % size;
+    const margin = size === 9 ? 10 : 14;
+    const span = 100 - margin * 2;
     const owner = showTerritory ? area.owners[index] : 0;
     point.type = 'button';
     point.className = `point${owner === 1 ? ' owned-black' : owner === 2 ? ' owned-white' : ''}${!draftBoard && game.lastMove === index ? ' last' : ''}${window.__deadMarks?.has(index) ? ' dead-marked' : ''}`;
-    point.style.left = `${14 + col * 18}%`;
-    point.style.top = `${14 + row * 18}%`;
+    point.style.left = `${margin + col * span / (size - 1)}%`;
+    point.style.top = `${margin + row * span / (size - 1)}%`;
     point.setAttribute('aria-label', `${coordinate(index)} ${stone ? `${colorName(stone)}の石` : '空点'}${owner ? `・${colorName(owner)}の地` : ''}`);
     point.disabled = game.phase === 'agreement' ? !stone : !draftBoard && (!humanTurn || stone !== 0);
     if (stone) {
@@ -201,6 +213,20 @@ function render() {
 
   resultNode.hidden = !ended || Boolean(draftBoard);
   if (ended && !draftBoard) renderResult(totals);
+}
+
+function renderBoardGrid(size) {
+  const svg = $('board-grid');
+  const margin = size === 9 ? 50 : 70;
+  const span = 500 - margin * 2;
+  const coordinates = Array.from({ length: size }, (_, index) => margin + span * index / (size - 1));
+  const horizontal = coordinates.map((y) => `<path d="M${margin} ${y}H${500 - margin}"/>`).join('');
+  const vertical = coordinates.map((x) => `<path d="M${x} ${margin}V${500 - margin}"/>`).join('');
+  const xLabels = coordinates.map((x, index) => `<text x="${x}" y="32">${index + 1}</text>`).join('');
+  const yLabels = coordinates.map((y, index) => `<text x="28" y="${y + 6}">${verticalNumerals[index]}</text>`).join('');
+  const starIndices = size === 9 ? [2, 4, 6] : [2];
+  const stars = starIndices.flatMap((row) => starIndices.map((col) => `<circle cx="${coordinates[col]}" cy="${coordinates[row]}" r="3" fill="#766044"/>`)).join('');
+  svg.innerHTML = `<defs><pattern id="grain" width="70" height="9" patternUnits="userSpaceOnUse"><path d="M0 4Q20 1 70 5" stroke="#a47839" fill="none" opacity=".055"/></pattern></defs><rect width="500" height="500" fill="url(#grain)"/><g stroke="#766044" stroke-width="1.5">${horizontal}${vertical}</g>${stars}<g fill="#8a7459" font-size="15" text-anchor="middle" font-family="system-ui">${xLabels}${yLabels}</g>`;
 }
 
 $('score-chart-panel').addEventListener('toggle', () => {
@@ -317,8 +343,17 @@ $('edit-setup').addEventListener('click', () => {
   $('komi').value = String(game.komi ?? 0);
   draftIncludeCaptures = game.rules === RULES.JAPANESE || game.includeCaptures;
   $('setup-player').value = String(game.playerColor ?? 1);
+  $('setup-size').value = String(game.size ?? SIZE);
   draftBoard = game.board.slice();
   setAnnouncement('黒・白・消しゴムを選んで盤をタップ。配置から始めると手の記録をリセットします。');
+  render();
+});
+$('setup-size').addEventListener('change', (event) => {
+  if (!draftBoard) return;
+  const size = Number(event.currentTarget.value);
+  if (!SUPPORTED_SIZES.includes(size) || size === boardSize(draftBoard)) return;
+  draftBoard = Array(size * size).fill(0);
+  setAnnouncement(`${size}路盤に切り替えました。編集中の盤を空にしました。キャンセルすると元の対局に戻ります。`);
   render();
 });
 $('clear-setup').addEventListener('click', () => {
@@ -424,14 +459,14 @@ $('include-captures').addEventListener('change', (event) => {
   scheduleCpu();
 });
 $('new-game').addEventListener('click', () => {
-  if (game.over) return beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。');
+  if (game.over) return beginGame(newGame(game.size), '新しい対局です。あなた（黒）の初手を打ってください。');
   $('confirm-dialog').showModal();
 });
-$('again').addEventListener('click', () => beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。'));
+$('again').addEventListener('click', () => beginGame(newGame(game.size), '新しい対局です。あなた（黒）の初手を打ってください。'));
 $('cancel-dialog').addEventListener('click', () => $('confirm-dialog').close());
 $('confirm-dialog-button').addEventListener('click', () => {
   $('confirm-dialog').close();
-  beginGame(newGame(), '新しい対局です。あなた（黒）の初手を打ってください。');
+  beginGame(newGame(game.size), '新しい対局です。あなた（黒）の初手を打ってください。');
 });
 let sharedSetup = decodeSetup(location.hash);
 let invalidSharedSetup = false;

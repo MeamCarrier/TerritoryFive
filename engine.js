@@ -1,6 +1,12 @@
 export const SIZE = 5;
-const POINTS = SIZE * SIZE;
+export const SUPPORTED_SIZES = Object.freeze([5, 9]);
 export const RULES = Object.freeze({ CUSTOM: 'custom', JAPANESE: 'japanese' });
+
+export function boardSize(board) {
+  if (!Array.isArray(board)) return 0;
+  const size = Math.sqrt(board.length);
+  return Number.isInteger(size) && SUPPORTED_SIZES.includes(size) ? size : 0;
+}
 
 // Share only the starting board and rule settings; the fragment stays local to
 // the browser and is not sent to the hosting server.
@@ -10,7 +16,7 @@ export function encodeSetup(board, rules = RULES.CUSTOM, komi = 0, includeCaptur
   if (nextTurn !== 1 && nextTurn !== 2) throw new TypeError('invalid-turn');
   if (!Number.isFinite(komi) || komi < 0 || komi > 7.5 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-komi');
   const cells = board.map((point) => point === 1 ? 'B' : point === 2 ? 'W' : '.').join('');
-  return `#tf=1&board=${cells}&rules=${rules}&komi=${komi}&captures=${rules === RULES.JAPANESE ? 1 : Number(Boolean(includeCaptures))}&player=${playerColor}&turn=${nextTurn}`;
+  return `#tf=1&size=${boardSize(board)}&board=${cells}&rules=${rules}&komi=${komi}&captures=${rules === RULES.JAPANESE ? 1 : Number(Boolean(includeCaptures))}&player=${playerColor}&turn=${nextTurn}`;
 }
 
 export function decodeSetup(hash) {
@@ -18,39 +24,41 @@ export function decodeSetup(hash) {
     const params = new URLSearchParams(String(hash).replace(/^#/, ''));
     if (params.get('tf') !== '1') return null;
     const cells = params.get('board');
+    const size = Number(params.get('size') ?? Math.sqrt(cells?.length ?? 0));
     const rules = params.get('rules');
     const komiText = params.get('komi') ?? '0';
     const capturesText = params.get('captures') ?? '0';
     const playerText = params.get('player') ?? '1';
     const turnText = params.get('turn') ?? playerText;
     const komi = Number(komiText);
-    if (!cells || cells.length !== POINTS || !/^[.BW]{25}$/.test(cells) ||
+    if (!cells || !SUPPORTED_SIZES.includes(size) || cells.length !== size * size || !new RegExp(`^[.BW]{${size * size}}$`).test(cells) ||
         !Object.values(RULES).includes(rules) ||
         !/^(?:0|[1-7])(?:\.5)?$/.test(komiText) || komi > 7.5 || !['0', '1'].includes(capturesText) || !['1', '2'].includes(playerText) || !['1', '2'].includes(turnText)) return null;
-    return { board: [...cells].map((cell) => cell === 'B' ? 1 : cell === 'W' ? 2 : 0), rules, komi, includeCaptures: rules === RULES.JAPANESE || capturesText === '1', playerColor: Number(playerText), turn: Number(turnText) };
+    return { board: [...cells].map((cell) => cell === 'B' ? 1 : cell === 'W' ? 2 : 0), size, rules, komi, includeCaptures: rules === RULES.JAPANESE || capturesText === '1', playerColor: Number(playerText), turn: Number(turnText) };
   } catch { return null; }
 }
 
-export function neighbors(index) {
-  if (!Number.isInteger(index) || index < 0 || index >= POINTS) return [];
+export function neighbors(index, size = SIZE) {
+  if (!SUPPORTED_SIZES.includes(size) || !Number.isInteger(index) || index < 0 || index >= size * size) return [];
 
-  const row = Math.floor(index / SIZE);
-  const col = index % SIZE;
+  const row = Math.floor(index / size);
+  const col = index % size;
   const result = [];
-  if (row > 0) result.push(index - SIZE);
+  if (row > 0) result.push(index - size);
   if (col > 0) result.push(index - 1);
-  if (col < SIZE - 1) result.push(index + 1);
-  if (row < SIZE - 1) result.push(index + SIZE);
+  if (col < size - 1) result.push(index + 1);
+  if (row < size - 1) result.push(index + size);
   return result;
 }
 
 function validBoard(board) {
-  return Array.isArray(board) && board.length === POINTS &&
+  return boardSize(board) > 0 &&
     board.every((point) => point === 0 || point === 1 || point === 2);
 }
 
 export function group(board, index) {
-  if (!validBoard(board) || !Number.isInteger(index) || index < 0 || index >= POINTS || board[index] === 0) {
+  const size = boardSize(board);
+  if (!size || !Number.isInteger(index) || index < 0 || index >= board.length || board[index] === 0) {
     return { stones: [], liberties: [] };
   }
 
@@ -63,7 +71,7 @@ export function group(board, index) {
   while (pending.length > 0) {
     const current = pending.pop();
     stones.push(current);
-    for (const next of neighbors(current)) {
+    for (const next of neighbors(current, size)) {
       if (board[next] === 0) {
         liberties.add(next);
       } else if (board[next] === color && !seen.has(next)) {
@@ -82,10 +90,11 @@ function failedMove(board, error) {
 }
 
 export function tryMove(board, color, index) {
+  const size = boardSize(board);
   if (!validBoard(board)) return failedMove(board, 'invalid-board');
   if (color !== 1 && color !== 2) return failedMove(board, 'invalid-color');
   if (index === null) return failedMove(board, 'pass-not-allowed');
-  if (!Number.isInteger(index) || index < 0 || index >= POINTS) return failedMove(board, 'invalid-index');
+  if (!Number.isInteger(index) || index < 0 || index >= board.length) return failedMove(board, 'invalid-index');
   if (board[index] !== 0) return failedMove(board, 'occupied');
 
   const nextBoard = board.slice();
@@ -94,7 +103,7 @@ export function tryMove(board, color, index) {
   const examined = new Set();
   const captured = [];
 
-  for (const adjacent of neighbors(index)) {
+  for (const adjacent of neighbors(index, size)) {
     if (nextBoard[adjacent] !== opponent || examined.has(adjacent)) continue;
     const opposingGroup = group(nextBoard, adjacent);
     for (const stone of opposingGroup.stones) examined.add(stone);
@@ -115,15 +124,17 @@ export function tryMove(board, color, index) {
 }
 
 export function territory(board) {
-  if (!validBoard(board)) throw new TypeError('board must be a 25-point array containing only 0, 1, or 2');
+  if (!validBoard(board)) throw new TypeError('board must be a 25- or 81-point array containing only 0, 1, or 2');
 
-  const owners = Array(POINTS).fill(0);
+  const size = boardSize(board);
+  const points = board.length;
+  const owners = Array(points).fill(0);
   const visited = new Set();
   let black = 0;
   let white = 0;
   let neutral = 0;
 
-  for (let start = 0; start < POINTS; start += 1) {
+  for (let start = 0; start < points; start += 1) {
     if (board[start] !== 0 || visited.has(start)) continue;
     const region = [];
     const boundaryColors = new Set();
@@ -133,7 +144,7 @@ export function territory(board) {
     while (pending.length > 0) {
       const current = pending.pop();
       region.push(current);
-      for (const next of neighbors(current)) {
+      for (const next of neighbors(current, size)) {
         if (board[next] === 0 && !visited.has(next)) {
           visited.add(next);
           pending.push(next);
@@ -182,10 +193,12 @@ function finishByPasses(state) {
   return { ...state, over: true, reason: 'passes', result, winner };
 }
 
-export function newGame() {
-  const board = Array(POINTS).fill(0);
+export function newGame(size = SIZE) {
+  if (!SUPPORTED_SIZES.includes(size)) throw new TypeError('invalid-size');
+  const board = Array(size * size).fill(0);
   return {
     board,
+    size,
     initialBoard: board.slice(),
     turn: 1,
     initialTurn: 1,
@@ -270,7 +283,7 @@ export function finishAgreement(state, deadStones = []) {
   const board = state.board.slice();
   const removed = new Set();
   for (const index of deadStones) {
-    if (!Number.isInteger(index) || index < 0 || index >= POINTS || !board[index]) continue;
+    if (!Number.isInteger(index) || index < 0 || index >= board.length || !board[index]) continue;
     for (const stone of group(board, index).stones) removed.add(stone);
   }
   const captures = { ...state.captures };
@@ -294,12 +307,12 @@ export function setupGame(board, rules = RULES.CUSTOM, komi = 0, includeCaptures
   if (playerColor !== 1 && playerColor !== 2) throw new TypeError('invalid-player-color');
   if (nextTurn !== 1 && nextTurn !== 2) throw new TypeError('invalid-turn');
   if (!Object.values(RULES).includes(rules) || !Number.isFinite(komi) || komi < 0 || komi > 7.5 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-rules');
-  for (let index = 0; index < POINTS; index += 1) {
+  for (let index = 0; index < board.length; index += 1) {
     if (board[index] && group(board, index).liberties.length === 0) {
       throw new Error('no-liberties');
     }
   }
-  return { ...newGame(), board: board.slice(), initialBoard: board.slice(), turn: nextTurn, initialTurn: nextTurn, playerColor, rules, komi: rules === RULES.JAPANESE ? komi : 0, includeCaptures: rules === RULES.JAPANESE || Boolean(includeCaptures), history: [positionKey(board, nextTurn)] };
+  return { ...newGame(boardSize(board)), board: board.slice(), initialBoard: board.slice(), turn: nextTurn, initialTurn: nextTurn, playerColor, rules, komi: rules === RULES.JAPANESE ? komi : 0, includeCaptures: rules === RULES.JAPANESE || Boolean(includeCaptures), history: [positionKey(board, nextTurn)] };
 }
 
 // Return to just before the latest human move, including any CPU reply.
@@ -308,7 +321,7 @@ export function undoHumanTurn(state) {
   const playerColor = state.playerColor ?? 1;
   const lastHuman = state.log.findLastIndex((move) => move.color === playerColor);
   if (lastHuman < 0) return null;
-  let restored = setupGame(state.initialBoard ?? Array(POINTS).fill(0), state.rules ?? RULES.CUSTOM, state.komi ?? 0, state.includeCaptures, playerColor, state.initialTurn ?? playerColor);
+  let restored = setupGame(state.initialBoard ?? Array((state.size ?? SIZE) ** 2).fill(0), state.rules ?? RULES.CUSTOM, state.komi ?? 0, state.includeCaptures, playerColor, state.initialTurn ?? playerColor);
   for (const move of state.log.slice(0, lastHuman)) {
     const result = play(restored, move.index);
     if (!result.ok) throw new Error('invalid-history');

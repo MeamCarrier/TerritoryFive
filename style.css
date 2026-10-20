@@ -13,3 +13,4 @@ main{padding-top:18px}@media(max-width:760px){main{padding-top:14px}}.chart-head
 /* Let score details wrap instead of widening the scoreboard on narrow screens. */
 .score-player>div{min-width:0}.score-detail{white-space:normal;overflow-wrap:anywhere}.score-player b{flex-shrink:0}
 @media(max-width:480px){.score-divider{padding:0 5px}.score-player{gap:6px}}
+.board.nine .point{width:12%;height:12%}

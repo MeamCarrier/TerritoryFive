@@ -3,9 +3,11 @@ import { neighbors, group, tryMove, territory, score } from './engine.js';
 const PASS = null;
 const MAX_DEPTH = 9;
 const NODE_BUDGET = 140_000;
+const NINE_NODE_BUDGET = 9_000;
 const SEARCH_LIMIT = Symbol('search-limit');
 
 function evaluate(board, color, captures, includeCaptures, rules = 'custom', komi = 0) {
+  const size = Math.sqrt(board.length);
   const area = territory(board);
   const sign = color === 1 ? 1 : -1;
   let value = sign * ((area.black - area.white) + (includeCaptures ? captures[1] - captures[2] : 0) - (rules === 'japanese' ? komi : 0)) * 3.5;
@@ -29,7 +31,7 @@ function evaluate(board, color, captures, includeCaptures, rules = 'custom', kom
     if (board[i] !== 0) continue;
     let own = 0;
     let enemy = 0;
-    for (const next of neighbors(i)) {
+    for (const next of neighbors(i, size)) {
       if (board[next] === color) own += 1;
       else if (board[next] === 3 - color) enemy += 1;
     }
@@ -49,24 +51,46 @@ function legalMoves(board, color) {
 }
 
 function movePriority(move, color, includeCaptures) {
+  const size = Math.sqrt(move.board.length);
   const capture = includeCaptures ? move.captured.length * 12 : 0;
   const liberties = group(move.board, move.index).liberties.length;
   let contact = 0;
-  for (const next of neighbors(move.index)) {
+  for (const next of neighbors(move.index, size)) {
     if (move.board[next] === 3 - color) contact += 1;
   }
   return capture + Math.min(liberties, 4) * 1.5 + contact * 0.3;
 }
 
 function orderedMoves(board, color, includeCaptures) {
-  return legalMoves(board, color)
+  const size = Math.sqrt(board.length);
+  const moves = legalMoves(board, color)
     .map((move) => ({ ...move, priority: movePriority(move, color, includeCaptures) }))
     .sort((a, b) => b.priority - a.priority);
+  if (size !== 9) return moves;
+
+  // On the larger board, search locally around existing stones plus a compact
+  // set of central/opening points. This keeps the worker responsive.
+  const occupied = board.flatMap((point, index) => point ? [index] : []);
+  const distanceFromCenter = (index) => {
+    const row = Math.floor(index / size);
+    const col = index % size;
+    return Math.abs(row - 4) + Math.abs(col - 4);
+  };
+  const local = moves.filter(({ index, captured }) => captured.length || occupied.some((stone) => {
+    const rowGap = Math.abs(Math.floor(index / size) - Math.floor(stone / size));
+    const colGap = Math.abs(index % size - stone % size);
+    return Math.max(rowGap, colGap) <= 2;
+  }));
+  const candidates = local.length ? local : moves;
+  return candidates
+    .map((move) => ({ ...move, priority: move.priority - distanceFromCenter(move.index) * (occupied.length ? 0.08 : 0.45) }))
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, 16);
 }
 
 function search(board, color, captures, passes, depth, alpha, beta, budget, includeCaptures, rules, komi) {
   budget.nodes += 1;
-  if (budget.nodes > NODE_BUDGET) throw SEARCH_LIMIT;
+  if (budget.nodes > (board.length === 81 ? NINE_NODE_BUDGET : NODE_BUDGET)) throw SEARCH_LIMIT;
   if (passes >= 2) {
     const result = score(board, captures, includeCaptures, rules, komi);
     return (color === 1 ? result.black - result.white : result.white - result.black) * 10000;
