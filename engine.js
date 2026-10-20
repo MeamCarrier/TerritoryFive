@@ -6,7 +6,7 @@ export const RULES = Object.freeze({ CUSTOM: 'custom', JAPANESE: 'japanese' });
 // the browser and is not sent to the hosting server.
 export function encodeSetup(board, rules = RULES.CUSTOM, komi = 0, includeCaptures = false) {
   if (!validBoard(board) || !Object.values(RULES).includes(rules)) throw new TypeError('invalid-setup');
-  if (!Number.isFinite(komi) || komi < 0 || komi > 25 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-komi');
+  if (!Number.isFinite(komi) || komi < 0 || komi > 7.5 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-komi');
   const cells = board.map((point) => point === 1 ? 'B' : point === 2 ? 'W' : '.').join('');
   return `#tf=1&board=${cells}&rules=${rules}&komi=${komi}&captures=${rules === RULES.JAPANESE ? 1 : Number(Boolean(includeCaptures))}`;
 }
@@ -22,7 +22,7 @@ export function decodeSetup(hash) {
     const komi = Number(komiText);
     if (!cells || cells.length !== POINTS || !/^[.BW]{25}$/.test(cells) ||
         !Object.values(RULES).includes(rules) ||
-        !/^(?:0|[1-9]\d?)(?:\.5)?$/.test(komiText) || komi > 25 || !['0', '1'].includes(capturesText)) return null;
+        !/^(?:0|[1-7])(?:\.5)?$/.test(komiText) || komi > 7.5 || !['0', '1'].includes(capturesText)) return null;
     return { board: [...cells].map((cell) => cell === 'B' ? 1 : cell === 'W' ? 2 : 0), rules, komi, includeCaptures: rules === RULES.JAPANESE || capturesText === '1' };
   } catch { return null; }
 }
@@ -285,7 +285,7 @@ export function resumeAfterAgreement(state) {
 
 export function setupGame(board, rules = RULES.CUSTOM, komi = 0, includeCaptures = false) {
   if (!validBoard(board)) throw new TypeError('invalid-board');
-  if (!Object.values(RULES).includes(rules) || !Number.isFinite(komi) || komi < 0 || komi > 25 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-rules');
+  if (!Object.values(RULES).includes(rules) || !Number.isFinite(komi) || komi < 0 || komi > 7.5 || Math.round(komi * 2) !== komi * 2) throw new TypeError('invalid-rules');
   for (let index = 0; index < POINTS; index += 1) {
     if (board[index] && group(board, index).liberties.length === 0) {
       throw new Error('no-liberties');
